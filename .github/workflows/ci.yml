@@ -1,0 +1,104 @@
+# GitHub Actions CI
+#
+# 四道门，任何一道红都不许合：
+#   1. lint      —— ruff（含 pyflakes，能抓 undefined name 这类真 bug）
+#   2. test      —— pytest（含迁移校验、检索质量回归）
+#   3. frontend  —— vitest + vue-tsc + 构建
+#   4. docker    —— 两个镜像能构建出来（Dockerfile 坏掉在这里暴露）
+#
+# 依赖漏洞扫描是独立 workflow（dependency-audit.yml），按周跑，不阻塞 PR。
+
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  backend-lint:
+    name: Backend Lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt
+          pip install ruff==0.17.2
+      - name: Ruff
+        run: ruff check app tests scripts
+
+  backend-test:
+    name: Backend Pytest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt
+      - name: Test
+        env:
+          LLM_API_KEY: test-key
+        run: pytest -q
+
+  frontend:
+    name: Frontend Test & Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        run: npm ci --legacy-peer-deps
+      - name: Unit tests
+        run: npm run test
+      - name: Type check + build
+        run: npm run build
+
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [backend-lint, backend-test, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          load: false
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: false
+          load: false
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend

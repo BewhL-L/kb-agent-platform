@@ -1,0 +1,23 @@
+# 工具配置（ruff）。只放配置，不做打包。
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+# E/F/W 是 pycodestyle + pyflakes 的核心集，I 是 import 排序
+select = ["E", "F", "W", "I"]
+# 行长交给格式化工具，先不做硬性拦截
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# main.py 里 models 的 import 必须放在建表之前，位置是刻意的
+"app/main.py" = ["E402"]
+# conftest 必须先设置环境变量，再 import app
+"tests/conftest.py" = ["E402"]
+# 训练脚本用 import 探测可选依赖，删掉会破坏探测逻辑
+"scripts/finetune/train_dpo.py" = ["F401"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

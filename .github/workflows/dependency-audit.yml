@@ -1,0 +1,58 @@
+# 依赖漏洞扫描（按周跑，不阻塞 PR）
+#
+# 为什么独立：依赖升级是计划性动作，不该卡住日常提交；
+# 但也不能不看——把报告作为 artifact 留档，红了就排期升级。
+#
+# 手动触发：Actions -> Dependency Audit -> Run workflow
+
+name: Dependency Audit
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"   # 每周一 03:00 UTC
+  workflow_dispatch:
+
+jobs:
+  pip-audit:
+    name: Python (pip-audit)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Audit
+        run: pip-audit -r requirements.txt --desc on | tee pip-audit.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pip-audit-report
+          path: backend/pip-audit.txt
+
+  npm-audit:
+    name: Node (npm audit)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install
+        run: npm ci --legacy-peer-deps
+      - name: Audit
+        run: npm audit --audit-level=high | tee npm-audit.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: npm-audit-report
+          path: frontend/npm-audit.txt

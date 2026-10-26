@@ -1,0 +1,40 @@
+# GitHub Actions CI/CD 模板
+# 作用：push 到 main 分支后，自动构建镜像并部署（需在仓库 Settings 配置好 Secrets）
+#
+# 需要配置的 Secrets：
+#   SSH_HOST       服务器 IP
+#   SSH_USER       登录用户（如 root）
+#   SSH_KEY        SSH 私钥
+#   SSH_PORT       SSH 端口（默认 22）
+
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # 支持手动触发
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 SSH 并部署
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            cd /opt/kb-platform
+            git pull origin main
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+            docker image prune -f
+
+# 说明：
+# 1. 首次部署请先在服务器手动 clone 仓库并配置好 backend/.env
+# 2. 之后每次 push 到 main，就会自动拉取最新代码并重新构建部署
+# 3. 如果暂时不需要自动化，忽略本文件即可，不影响本地和手动部署

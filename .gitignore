@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+*.db
+*.sqlite3
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# 上传文件与向量库
+backend/uploads/*
+!backend/uploads/.gitkeep
+backend/chroma_db/
+# 运行期可写状态（BM25 索引 / Embedding 缓存 / 长期记忆 / 评测报告），Docker 里与 worker 共享
+backend/data/*
+!backend/data/.gitkeep
+backend/embedding_cache.json
+backend/bm25_index/
+backend/eval_reports/
+backend/long_memory.json
+
+# 环境变量
+.env
+backend/.env
+
+# Node
+node_modules/
+frontend/dist/
+frontend/coverage/
+npm-debug.log*
+pnpm-debug.log*
+
+# 构建产物
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log

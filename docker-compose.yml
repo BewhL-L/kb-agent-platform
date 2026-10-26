@@ -1,0 +1,120 @@
+name: knowledge-base-platform
+
+# 说明：
+#   1. backend/.env 通过 env_file 注入（不要用 volumes 挂 .env：文件不存在时 Docker 会建成目录）
+#   2. 所有「运行期会变」的状态统一落在 backend/data/，backend 与 celery-worker 共享同一份
+#      （BM25 索引、Embedding 缓存、长期记忆、评测报告）——否则 worker 建的索引 API 看不到
+#   3. 真正不可变的数据（业务库、向量、文件）分别放 postgres / qdrant / backend/uploads
+
+services:
+  # ========== PostgreSQL：业务数据库 ==========
+  postgres:
+    image: postgres:16-alpine
+    container_name: kb-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: kb_password
+      POSTGRES_DB: knowledge_base
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d knowledge_base"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ========== Redis：缓存 + 消息队列 ==========
+  redis:
+    image: redis:7-alpine
+    container_name: kb-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ========== Qdrant：向量数据库 ==========
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: kb-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"   # HTTP API
+      - "6334:6334"   # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  # ========== 后端服务（FastAPI） ==========
+  backend:
+    build: ./backend
+    container_name: kb-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    # 启动前把库升到 head：空库建全、老库自动 stamp、已纳管则幂等升级
+    command: sh -c "python scripts/db_bootstrap.py && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/uploads:/app/uploads
+      - ./backend/data:/app/data
+    environment:
+      # 容器内不是开发环境：关闭 DEBUG，避免把堆栈直接回给客户端
+      - DEBUG=false
+      # 数据库：Docker 网络内用服务名 postgres
+      - DATABASE_URL=postgresql+psycopg2://postgres:kb_password@postgres:5432/knowledge_base
+      # Redis：Docker 网络内用服务名 redis
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      # 向量数据库：切换为 Qdrant
+      - VECTOR_PROVIDER=qdrant
+      - QDRANT_URL=http://qdrant:6333
+      # 运行期可写状态统一放 /app/data（与 celery-worker 共享）
+      - BM25_INDEX_DIR=/app/data/bm25_index
+      - EMBEDDING_CACHE_PATH=/app/data/embedding_cache.json
+      - LONG_MEMORY_PATH=/app/data/long_memory.json
+      - EVAL_REPORT_DIR=/app/data/eval_reports
+      - UPLOAD_DIR=/app/uploads
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+
+  # ========== 前端服务（Nginx 托管 + 反向代理） ==========
+  frontend:
+    build: ./frontend
+    container_name: kb-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+# ========== 数据持久化卷 ==========
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  qdrant_data:
+    driver: local

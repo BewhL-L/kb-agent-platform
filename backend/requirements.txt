@@ -1,0 +1,61 @@
+# ============================================================
+# 核心依赖（必须安装，覆盖 RAG + Agent 主流程与测试）
+# ============================================================
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+sqlalchemy==2.0.35
+pydantic==2.9.2
+pydantic-settings==2.5.2
+python-multipart==0.0.12
+python-jose[cryptography]==3.3.0
+bcrypt==4.0.1
+python-dotenv==1.0.1
+httpx==0.27.2
+openai==1.51.0
+chromadb==0.5.5
+PyPDF2==3.0.1
+python-docx==1.1.2
+aiofiles==24.1.0
+
+# 中文分词（强烈建议，提升 BM25 效果；缺失时代码自动降级为单字+bigram）
+jieba==0.42.1
+
+# 测试
+pytest==8.3.3
+
+# ============================================================
+# 以下为「可选增强」，按需安装；不安装不影响核心功能，代码会优雅降级
+# ============================================================
+
+# --- 检索增强（混合检索 / Rerank）---
+# cohere==5.9.4            # Cohere 多语言 Rerank（RERANK_PROVIDER=cohere 时需要）
+
+# --- 评测体系（RAGAS 官方指标）---
+# ragas==0.2.10
+# datasets==3.0.1
+
+# --- Agent 编排（LangGraph ReAct / Plan-Execute / 多 Agent）---
+# langgraph==0.2.45
+# langchain-core==0.3.15
+# langchain-openai==0.2.5
+
+# --- 可观测性（Langfuse Tracing）---
+# langfuse==2.51.0
+
+# --- MCP 协议（对外暴露检索/问答）---
+# mcp==1.2.0
+
+# --- 生产化（异步任务 / 缓存 / PostgreSQL / 向量数据库）---
+# celery 供 docker-compose.prod.yml 的 worker 使用，本地开发可不安（ASYNC_MODE=thread）
+celery==5.4.0
+redis==5.1.1
+psycopg2-binary==2.9.9
+qdrant-client==1.11.0
+
+# --- 数据库迁移（结构变更的唯一正确方式）---
+alembic==1.13.3
+
+# --- 多模态（OCR / 表格抽取）---
+# pytesseract==0.3.13
+# pillow==10.4.0
+# pdfplumber==0.11.4

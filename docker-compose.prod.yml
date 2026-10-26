@@ -1,0 +1,54 @@
+# 生产增强版：在基础版之上增加 Celery 异步文档处理
+#
+# 用法：
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# 关键约束（踩过的坑，改之前先读）：
+#   1. 不要在 overlay 里重写 DATABASE_URL / VECTOR_PROVIDER / QDRANT_URL
+#      —— overlay 的 environment 会覆盖 base，重写就会把后端打回容器内 SQLite / Chroma，
+#         而 worker 与 API 各持一份独立数据，表现为「文档一直 processing、检索为空」。
+#   2. ASYNC_MODE 必须为 celery，否则后端仍走本地线程，worker 永远拿不到任务。
+#   3. worker 必须与 backend 挂同一份 /app/data，否则它写的 BM25 索引 API 读不到。
+#   4. Celery 依赖已在 backend/requirements.txt 中启用，镜像内才有 celery 命令。
+
+services:
+  # Celery worker：异步执行文档解析 / 切片 / 向量化 / Wiki 编译
+  celery-worker:
+    build: ./backend
+    container_name: kb-celery
+    restart: unless-stopped
+    command: celery -A app.tasks.celery_app:celery_app worker --loglevel=info --concurrency=2
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend/uploads:/app/uploads
+      - ./backend/data:/app/data
+    environment:
+      - DEBUG=false
+      - DATABASE_URL=postgresql+psycopg2://postgres:kb_password@postgres:5432/knowledge_base
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - VECTOR_PROVIDER=qdrant
+      - QDRANT_URL=http://qdrant:6333
+      - BM25_INDEX_DIR=/app/data/bm25_index
+      - EMBEDDING_CACHE_PATH=/app/data/embedding_cache.json
+      - LONG_MEMORY_PATH=/app/data/long_memory.json
+      - EVAL_REPORT_DIR=/app/data/eval_reports
+      - UPLOAD_DIR=/app/uploads
+      - ASYNC_MODE=celery
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      # 等 backend 完成迁移并健康后再起 worker，避免并发跑迁移
+      backend:
+        condition: service_healthy
+
+  # 后端切到队列模式（只覆盖这一个键，其余继承 base）
+  backend:
+    environment:
+      - ASYNC_MODE=celery

@@ -1,0 +1,197 @@
+{
+  "version": "1.0",
+  "description": "RAG / Agentic RAG 评测集（golden QA）模板。请把示例问题替换为你自己业务的真实问答。",
+  "fields_guide": {
+    "id": "用例唯一编号",
+    "kb_id": "该问题对应的知识库 ID（运行评测时也可用命令行/API 统一覆盖）",
+    "category": "问题分类，便于分场景统计",
+    "question": "用户真实会问的问题（尽量口语化、多样化）",
+    "reference_answer": "标准答案，用于人工核对/答案正确率",
+    "must_contain_keywords": "答案与正确资料中应当出现的关键事实词",
+    "expected_document_names": "应当被检索命中的来源文档名（用于 Hit@K / MRR）",
+    "note": "expected_document_names 与 must_contain_keywords 至少填写一类，检索指标才能计算"
+  },
+  "cases": [
+    {
+      "id": "ec_001",
+      "kb_id": 1,
+      "category": "售后-退款",
+      "question": "申请退款之后，钱一般多久能退回来？",
+      "reference_answer": "退款在商家确认后的 3-7 个工作日内原路退回支付账户。",
+      "must_contain_keywords": ["退款", "工作日", "原路"],
+      "expected_document_names": ["售后退换货政策.pdf"]
+    },
+    {
+      "id": "ec_002",
+      "kb_id": 1,
+      "category": "物流-运费",
+      "question": "退货的运费谁来承担？",
+      "reference_answer": "商品质量问题导致的退货运费由商家承担；七天无理由退货的首程运费由买家承担。",
+      "must_contain_keywords": ["运费", "质量问题", "无理由"],
+      "expected_document_names": ["售后退换货政策.pdf"]
+    },
+    {
+      "id": "ec_003",
+      "kb_id": 1,
+      "category": "物流-发票",
+      "question": "下单后可以开发票吗，怎么开？",
+      "reference_answer": "支持开具电子普通发票，在订单完成后于订单详情页申请，1-3 个工作日发送至邮箱。",
+      "must_contain_keywords": ["发票", "电子", "邮箱"],
+      "expected_document_names": ["发票与支付说明.docx"]
+    },
+    {
+      "id": "ec_004",
+      "kb_id": 1,
+      "category": "物流-发货",
+      "question": "付款之后什么时候发货？",
+      "reference_answer": "现货商品在付款后 48 小时内发出，预售商品以页面标注的发货时间为准。",
+      "must_contain_keywords": ["发货", "48小时", "预售"],
+      "expected_document_names": ["物流与发货说明.txt"]
+    },
+    {
+      "id": "ec_005",
+      "kb_id": 1,
+      "category": "售后-换货",
+      "question": "七天无理由换货需要满足什么条件？",
+      "reference_answer": "商品需保持全新、未使用、包装配件完好，且不影响二次销售，自签收之日起 7 天内可申请。",
+      "must_contain_keywords": ["7天", "不影响二次销售", "完好"],
+      "expected_document_names": ["售后退换货政策.pdf"]
+    },
+    {
+      "id": "ent_001",
+      "kb_id": 1,
+      "category": "人事-年假",
+      "question": "入职满一年有几天年休假？",
+      "reference_answer": "累计工作满 1 年不满 10 年的，年休假 5 天。",
+      "must_contain_keywords": ["年休假", "5天", "满1年"],
+      "expected_document_names": ["员工考勤与休假制度.pdf"]
+    },
+    {
+      "id": "ent_002",
+      "kb_id": 1,
+      "category": "财务-报销",
+      "question": "差旅报销的流程是什么，多久到账？",
+      "reference_answer": "在 OA 提交报销单并上传发票，部门负责人和财务审批通过后 5-10 个工作日打款至工资卡。",
+      "must_contain_keywords": ["报销", "审批", "工作日"],
+      "expected_document_names": ["费用报销管理办法.docx"]
+    },
+    {
+      "id": "ent_003",
+      "kb_id": 1,
+      "category": "人事-试用期",
+      "question": "试用期一般多长时间？",
+      "reference_answer": "劳动合同期限三年以上的，试用期不超过 6 个月；一年以上不满三年的不超过 2 个月。",
+      "must_contain_keywords": ["试用期", "6个月", "劳动合同"],
+      "expected_document_names": ["新员工入职手册.pdf"]
+    },
+    {
+      "id": "ent_004",
+      "kb_id": 1,
+      "category": "行政-请假",
+      "question": "临时有事怎么请事假？",
+      "reference_answer": "至少提前半天在 OA 发起事假申请，注明事由与时间，由直属主管审批通过后生效。",
+      "must_contain_keywords": ["事假", "OA", "主管"],
+      "expected_document_names": ["员工考勤与休假制度.pdf"]
+    },
+    {
+      "id": "ent_005",
+      "kb_id": 1,
+      "category": "IT-账号",
+      "question": "公司 VPN 怎么申请和登录？",
+      "reference_answer": "向 IT 服务台提交 VPN 开通申请，审批后通过统一身份认证账号登录客户端。",
+      "must_contain_keywords": ["VPN", "IT", "统一身份认证"],
+      "expected_document_names": ["IT系统使用指南.txt"]
+    },
+
+    {
+      "id": "global_001",
+      "kb_id": 1,
+      "category": "全局理解-概述",
+      "question": "这个知识库主要讲了哪些内容？",
+      "reference_answer": "知识库涵盖售后退换货、物流发货、发票支付、人事考勤休假、费用报销、IT 系统使用等企业制度与流程。",
+      "must_contain_keywords": ["售后", "物流", "人事", "报销"],
+      "expected_document_names": []
+    },
+    {
+      "id": "global_002",
+      "kb_id": 1,
+      "category": "全局理解-总结",
+      "question": "帮我总结一下售后退换货的核心政策要点",
+      "reference_answer": "核心要点包括：七天无理由退换需商品全新完好不影响二次销售；质量问题运费商家承担、无理由退货运费买家承担；退款在商家确认后3-7个工作日原路退回。",
+      "must_contain_keywords": ["七天无理由", "质量问题", "运费", "工作日"],
+      "expected_document_names": ["售后退换货政策.pdf"]
+    },
+    {
+      "id": "global_003",
+      "kb_id": 1,
+      "category": "全局理解-对比",
+      "question": "质量问题退货和七天无理由退货有什么区别？",
+      "reference_answer": "区别主要在运费承担：质量问题退货运费由商家承担；七天无理由退货首程运费由买家承担。两者都需在规定时间内申请，质量问题还需提供商品问题凭证。",
+      "must_contain_keywords": ["质量问题", "七天无理由", "运费", "商家", "买家"],
+      "expected_document_names": ["售后退换货政策.pdf"]
+    },
+    {
+      "id": "global_004",
+      "kb_id": 1,
+      "category": "全局理解-对比",
+      "question": "年假和事假有什么不同？",
+      "reference_answer": "年假是带薪假期，按累计工作年限确定天数（满1年5天）；事假是因个人事务临时申请，通常不带薪，需提前在OA由主管审批。",
+      "must_contain_keywords": ["年假", "带薪", "事假", "审批"],
+      "expected_document_names": ["员工考勤与休假制度.pdf"]
+    },
+    {
+      "id": "global_005",
+      "kb_id": 1,
+      "category": "全局理解-流程梳理",
+      "question": "从申请报销到钱到账，完整的流程是怎样的？",
+      "reference_answer": "在OA提交报销单并上传发票，先经部门负责人审批，再由财务审批，通过后5-10个工作日打款至工资卡。",
+      "must_contain_keywords": ["OA", "发票", "部门负责人", "财务", "工作日", "工资卡"],
+      "expected_document_names": ["费用报销管理办法.docx"]
+    },
+    {
+      "id": "global_006",
+      "kb_id": 1,
+      "category": "全局理解-总结",
+      "question": "员工可以享受哪些类型的假期？",
+      "reference_answer": "员工可享受年休假（带薪，按工作年限）、事假（个人事务，需审批）、以及病假、婚假、产假等法定假期，具体见考勤休假制度。",
+      "must_contain_keywords": ["年休假", "事假", "病假", "法定"],
+      "expected_document_names": ["员工考勤与休假制度.pdf"]
+    },
+    {
+      "id": "global_007",
+      "kb_id": 1,
+      "category": "全局理解-概述",
+      "question": "新员工入职后需要了解和办理哪些事情？",
+      "reference_answer": "新员工需了解试用期规定、考勤休假制度、费用报销流程，办理IT账号与VPN申请，熟悉企业邮箱与OA系统的使用。",
+      "must_contain_keywords": ["试用期", "考勤", "报销", "IT", "VPN"],
+      "expected_document_names": ["新员工入职手册.pdf"]
+    },
+    {
+      "id": "global_008",
+      "kb_id": 1,
+      "category": "全局理解-对比",
+      "question": "换货和退货在条件和处理方式上有什么区别？",
+      "reference_answer": "退货是退回商品并退款，退款3-7个工作日原路退回；换货是更换商品，需商品符合退换条件，质量问题相关运费由商家承担。",
+      "must_contain_keywords": ["退货", "换货", "退款", "运费"],
+      "expected_document_names": ["售后退换货政策.pdf"]
+    },
+    {
+      "id": "global_009",
+      "kb_id": 1,
+      "category": "全局理解-流程梳理",
+      "question": "从下单到收货再到可能的售后，整个流程涉及哪些环节？",
+      "reference_answer": "下单后可申请发票，现货48小时内发货；收货后如有问题，可在7天内申请退换货，质量问题运费商家承担，退款3-7个工作日原路退回。",
+      "must_contain_keywords": ["下单", "发票", "发货", "退换货", "退款"],
+      "expected_document_names": ["物流与发货说明.txt", "售后退换货政策.pdf"]
+    },
+    {
+      "id": "global_010",
+      "kb_id": 1,
+      "category": "全局理解-总结",
+      "question": "在发票和支付方面有哪些需要注意的事项？",
+      "reference_answer": "支持开具电子普通发票，订单完成后在订单详情页申请，1-3个工作日发送至邮箱；退款会原路退回支付账户，注意核对账户信息。",
+      "must_contain_keywords": ["电子发票", "订单详情", "邮箱", "原路退回"],
+      "expected_document_names": ["发票与支付说明.docx"]
+    }
+  ]
+}
