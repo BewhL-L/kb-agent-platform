@@ -9,9 +9,10 @@
 
 name: Build and Deploy
 
+# 只在手动触发时运行：服务器与 Secrets 还没配置，push 时自动跑必然红。
+# 配好 SSH_* Secrets 后，把 workflow_dispatch 下面两行 push 触发器打开即可。
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
   workflow_dispatch: # 支持手动触发
 
 jobs:

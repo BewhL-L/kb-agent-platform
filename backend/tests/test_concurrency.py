@@ -13,9 +13,10 @@ from app.services.vector_store import vector_store
 
 
 def test_aretrieve_does_not_block_event_loop(monkeypatch):
+    # 用 0.5s 而不是 0.2s：CI runner 负载抖动大，差距拉大后判定更稳
     def slow_query(*args, **kwargs):
         # 模拟同步 HTTP（embedding）或同步 LLM 精排的耗时
-        time.sleep(0.2)
+        time.sleep(0.5)
         return []
 
     monkeypatch.setattr(vector_store, "query", slow_query)
@@ -45,4 +46,6 @@ def test_aretrieve_does_not_block_event_loop(monkeypatch):
 
     max_gap = asyncio.run(scenario())
 
-    assert max_gap < 0.08, f"事件循环被阻塞 {max_gap * 1000:.0f}ms，检索没有走线程池"
+    # 阻塞情况下这里会是 ~500ms；线程池下正常在 10-30ms。
+    # 阈值取 200ms：既能容忍 CI 抖动，又能明确区分"阻塞"与"没阻塞"。
+    assert max_gap < 0.2, f"事件循环被阻塞 {max_gap * 1000:.0f}ms，检索没有走线程池"
