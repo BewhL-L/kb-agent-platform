@@ -1,5 +1,5 @@
 # GitHub Actions CI/CD 模板
-# 作用：push 到 main 分支后，自动构建镜像并部署（需在仓库 Settings 配置好 Secrets）
+# 作用：手动触发，构建镜像并通过 SSH 部署（需在仓库 Settings 配置好 Secrets）
 #
 # 需要配置的 Secrets：
 #   SSH_HOST       服务器 IP
@@ -13,7 +13,6 @@ name: Build and Deploy
 # 配好 SSH_* Secrets 后，把 workflow_dispatch 下面两行 push 触发器打开即可。
 on:
   workflow_dispatch:
-  workflow_dispatch: # 支持手动触发
 
 jobs:
   deploy:
