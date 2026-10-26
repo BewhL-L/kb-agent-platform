@@ -36,6 +36,9 @@ jobs:
           pip install ruff==0.17.2
       - name: Ruff
         run: ruff check app tests scripts
+      - name: Docs consistency
+        # 断言 README 里的测试数、路径、接口与代码一致（防文档漂移）
+        run: python scripts/check_docs.py
 
   backend-test:
     name: Backend Pytest

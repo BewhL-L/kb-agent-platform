@@ -1,5 +1,7 @@
 # 企业级智能知识库 + AI Agent 平台
 
+[![CI](https://github.com/BewhL-L/kb-agent-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/BewhL-L/kb-agent-platform/actions/workflows/ci.yml)
+
 面向企业内部知识问答的全栈应用：文档上传后自动完成解析、切片、向量化与知识编译，支持混合检索、Agent 自主工具调用、图谱增强与 LLM Wiki 页面，并自带评测体系。
 
 不依赖任何托管 RAG 平台，检索链路、Agent 编排、Wiki 编译、评测指标均为自实现。
@@ -16,7 +18,7 @@
 | 问答 | 普通 RAG / Agentic RAG / 推理模型（思考链）/ 流式 SSE / 跨库问答 | `POST /api/chat`、`/api/chat/stream` |
 | AI Agent | Function Calling 循环、工具预算、多 Agent 状态机（规划/检索/撰写/审核） | `POST /api/agent/multi-agent` |
 | LLM Wiki | 实体抽取 → 页面编译 → 双链 → 冲突检测 → 版本回滚 | `GET /api/wiki/kb/{id}/pages` |
-| GraphRAG | 实体/关系/社区构建，局部检索与 map-reduce 全局检索 | `POST /api/graphrag/kb/{id}/build` |
+| GraphRAG | 实体/关系/社区构建，局部检索与 map-reduce 全局检索（**独立入口，未接入主问答链路**） | `POST /api/graphrag/kb/{id}/build` |
 | 结构化回答 | 按模板（要点/对比表/时间线）输出严格 JSON，解析失败自动降级 | `POST /api/structured/generate` |
 | 评测 | 20 条金标集：关键词命中、上下文精确率/召回率、**拒答召回/误拒率**、LLM 裁判忠实度，可选 RAGAS | `POST /api/evaluation/run` |
 | 答案溯源 | 句子级 citation 覆盖率（字符二元组对齐，零成本、可复现），低置信自动标记 | `/api/chat` 返回 `grounding` |
@@ -67,7 +69,7 @@ docker compose up -d --build
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-docker compose exec backend python scripts/migrate_add_rbac.py   # 首次升级补 RBAC 表
+# 数据库迁移已内置在 backend 启动命令里（scripts/db_bootstrap.py），无需手动执行
 ```
 
 本地开发（不依赖 Docker）：
@@ -76,7 +78,7 @@ docker compose exec backend python scripts/migrate_add_rbac.py   # 首次升级�
 cd backend
 python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
 # .env 中改 DATABASE_URL=sqlite:///./knowledge_base.db、VECTOR_PROVIDER=chroma
-.venv/Scripts/alembic upgrade head        # 建表（全新库）
+.venv/Scripts/python scripts/db_bootstrap.py   # 建表 / 升级（空库建全、老库自动 stamp）
 .venv/Scripts/python -m uvicorn app.main:app --reload
 
 cd frontend && npm install && npm run dev
@@ -85,13 +87,23 @@ cd frontend && npm install && npm run dev
 ## 测试
 
 ```bash
-cd backend && ruff check app tests scripts   # lint（pyflakes 能抓 undefined name）
-cd backend && pytest -q                       # 104 passed
+cd backend && ruff check app tests scripts    # lint（pyflakes 能抓 undefined name）
+cd backend && pytest -q                        # 104 passed
+cd backend && python scripts/check_docs.py     # 文档一致性（测试数/路径/接口）
 cd frontend && npm run test                   # 5 passed（纯函数，vitest）
 cd frontend && npm run build                  # 含 vue-tsc 类型检查
 ```
 
-测试里有三道回归门：`test_migrations.py`（迁移能否建全表）、`test_eval_regression.py`（Hit@3 掉下阈值即红）、`test_grounding.py`（溯源与拒答指标）。
+测试里有六道回归门：
+
+| 门 | 文件 | 拦住什么 |
+|---|---|---|
+| 迁移可执行 | `test_migrations.py` | 改了模型没生成迁移 / 迁移脚本写坏 |
+| 检索质量 | `test_eval_regression.py` | 切片、检索、精排改坏导致 Hit@3 掉线 |
+| 溯源与拒答 | `test_grounding.py` | citation 覆盖率与拒答指标退化 |
+| 检索缓存 | `test_retrieval_cache.py` | 缓存命不中、文档变更后不失效 |
+| 并发不阻塞 | `test_concurrency.py` | 同步检索重新回到事件循环里 |
+| 文档一致性 | `scripts/check_docs.py` | 文档里的测试数、路径、接口与代码不符 |
 
 后端测试用假的 OpenAI / Chroma 替身，不依赖网络与外部服务；每个用例独立建表，互不污染。
 
@@ -107,7 +119,7 @@ backend/
   app/evaluation/      # 金标集、指标、拒答统计、LLM 裁判、RAGAS 适配
   migrations/          # Alembic 迁移（baseline 已固化 13 表 + 50 索引）
   scripts/             # 微调脚本、RBAC 迁移、索引效果实测
-  tests/               # 98 个测试（含迁移/检索回归/溯源三道门）
+  tests/               # 104 个测试（含迁移/检索回归/溯源/缓存/并发五道门）
 frontend/
   src/views/           # 13 个页面
   src/api/             # 类型化接口层
