@@ -17,6 +17,7 @@
 import ast
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -41,6 +42,13 @@ FORBIDDEN = {
     "98 个": "测试数量已过期",
     "hit_at_k": "评测字段实际是 hit@k",
     "architecture.svg": "架构图已更新为 architecture-v3.svg",
+}
+
+# 绝不允许出现在版本库里的文件（私有文档、密钥）。只检查已跟踪文件，
+# 这样本地存在但被 .gitignore 忽略的 .env 不会误报。
+FORBIDDEN_TRACKED = {
+    "项目学习指导书.md": "私有指导书（含 AI 协作说明），只允许放在 项目前期构建/",
+    "backend/.env": "含真实密钥，只允许用 .env.example",
 }
 
 # 只校验以这些前缀开头的路径，避免把「服务名/函数名」误当成文件路径
@@ -132,6 +140,30 @@ def check_paths(text: str) -> list:
     return errors
 
 
+def check_private_files(_text: str = None) -> list:
+    """检查版本库里是否混入了私有文档或密钥"""
+    try:
+        result = subprocess.run(
+            ["git", "ls-files"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:  # 不在 git 仓库里就跳过
+        print(f"[私有文件] 跳过：{type(exc).__name__}")
+        return []
+    if result.returncode != 0:
+        return []
+
+    tracked = set(result.stdout.splitlines())
+    return [
+        f"版本库里出现 `{name}`：{reason}"
+        for name, reason in FORBIDDEN_TRACKED.items()
+        if name in tracked
+    ]
+
+
 def check_forbidden(text: str) -> list:
     return [
         f"出现已废弃表述 `{needle}`：{reason}"
@@ -200,6 +232,7 @@ def main() -> int:
         ("测试数量", check_test_count),
         ("文档路径", check_paths),
         ("废弃表述", check_forbidden),
+        ("私有文件", check_private_files),
         ("接口路径", check_endpoints),
     ]
 

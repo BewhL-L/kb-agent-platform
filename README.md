@@ -32,14 +32,17 @@
 Vue 3 + TS (Element Plus / Pinia / ECharts)
         │  axios + SSE
         ▼
-   Nginx  ──/api──►  FastAPI
-                     ├── 路由层  routers/        认证 / 知识库 / 文档 / 问答 / Agent / Wiki / 图谱 / 评测
-                     ├── 服务层  services/       RAG、Agent、Wiki 编译、图谱构建、用量、缓存
-                     ├── 检索层  retrieval/      向量 + BM25 + RRF + 精排 + 查询改写 + Self-RAG
-                     ├── 编排层  orchestration/  原生状态机 / LangGraph（可选）
-                     ├── 上下文层 context_engine/ 历史压缩、token 预算、工具预算
-                     └── 数据层  SQLite→PostgreSQL，Chroma→Qdrant，Redis/Celery（可选）
+   Nginx  ──/api──►  FastAPI   JWT / RBAC / 限流
+                       │
+                       ├── 应用层   services/     RAG（检索→生成→溯源）/ Agent / Wiki / 图谱 / 结构化
+                       ├── 检索层   retrieval/    缓存（kb 版本号）→ 向量 + BM25 → RRF → LLM 精排
+                       ├── 编排层   orchestration/ 原生状态机 / LangGraph（可选）
+                       ├── 上下文层 context_engine/ 历史压缩、token 预算、工具预算
+                       ├── 模型层   LLM / Embedding / 推理 / 裁判（同步调用走线程池）
+                       └── 数据层   PostgreSQL·SQLite（Alembic）/ Qdrant·Chroma / Redis / 本地文件
 ```
+
+检索与生成在线程池执行，不阻塞事件循环；GraphRAG 是独立入口，未接入主链路。
 
 ## 关键设计
 
@@ -103,9 +106,11 @@ cd frontend && npm run build                  # 含 vue-tsc 类型检查
 | 溯源与拒答 | `test_grounding.py` | citation 覆盖率与拒答指标退化 |
 | 检索缓存 | `test_retrieval_cache.py` | 缓存命不中、文档变更后不失效 |
 | 并发不阻塞 | `test_concurrency.py` | 同步检索重新回到事件循环里 |
-| 文档一致性 | `scripts/check_docs.py` | 文档里的测试数、路径、接口与代码不符 |
+| 文档一致性 | `scripts/check_docs.py` | 测试数、路径、接口与代码不符；私有文档/密钥混入版本库 |
 
 后端测试用假的 OpenAI / Chroma 替身，不依赖网络与外部服务；每个用例独立建表，互不污染。
+
+工具调用也不必真跑模型：`tool_script` fixture 能让假模型按脚本发起 `tool_calls`，并记录回灌给模型的工具结果——这样就能对"Agent 是否正确调用某个工具"写断言。
 
 ## 目录结构
 
@@ -116,6 +121,7 @@ backend/
   app/retrieval/       # 向量/BM25/RRF/精排/改写/Self-RAG
   app/wiki/            # 编译、实体抽取、双链、冲突检测、版本
   app/orchestration/   # 原生多 Agent、LangGraph 适配
+  app/prompts/         # Prompt 注册表（name + version，调用记录可追溯）
   app/evaluation/      # 金标集、指标、拒答统计、LLM 裁判、RAGAS 适配
   migrations/          # Alembic 迁移（baseline 已固化 13 表 + 50 索引）
   scripts/             # 微调脚本、RBAC 迁移、索引效果实测
