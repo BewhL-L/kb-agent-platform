@@ -88,7 +88,7 @@ cd frontend && npm install && npm run dev
 
 ```bash
 cd backend && ruff check app tests scripts    # lint（pyflakes 能抓 undefined name）
-cd backend && pytest -q                        # 104 passed
+cd backend && pytest -q                        # 105 passed
 cd backend && python scripts/check_docs.py     # 文档一致性（测试数/路径/接口）
 cd frontend && npm run test                   # 5 passed（纯函数，vitest）
 cd frontend && npm run build                  # 含 vue-tsc 类型检查
@@ -119,7 +119,7 @@ backend/
   app/evaluation/      # 金标集、指标、拒答统计、LLM 裁判、RAGAS 适配
   migrations/          # Alembic 迁移（baseline 已固化 13 表 + 50 索引）
   scripts/             # 微调脚本、RBAC 迁移、索引效果实测
-  tests/               # 104 个测试（含迁移/检索回归/溯源/缓存/并发五道门）
+  tests/               # 106 个测试（含迁移/检索回归/溯源/缓存/并发五道门）
 frontend/
   src/views/           # 13 个页面
   src/api/             # 类型化接口层

@@ -56,21 +56,44 @@ def read_docs() -> str:
     return README.read_text(encoding="utf-8")
 
 
-def count_tests() -> int:
-    """统计 tests/ 下的测试函数数量（当前没有 parametrize，等价于收集数）"""
+def _is_skip_decorator(node) -> bool:
+    target = node.func if isinstance(node, ast.Call) else node
+    return (
+        isinstance(target, ast.Attribute)
+        and target.attr == "skip"
+        and isinstance(target.value, ast.Attribute)
+        and target.value.attr == "mark"
+    )
+
+
+def count_tests() -> tuple:
+    """返回 (测试函数总数, 被 skip 的数量)。
+
+    跳过用例仍然会被收集，但不会计入 passed，所以两个数字要分开校验。
+    """
     total = 0
+    skipped = 0
     for path in sorted((BACKEND_DIR / "tests").glob("test_*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        total += sum(
-            1 for node in tree.body
-            if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
+        module_skipped = any(
+            isinstance(node, ast.Assign)
+            and any(getattr(t, "id", "") == "pytestmark" for t in node.targets)
+            and any(_is_skip_decorator(n) for n in ast.walk(node.value))
+            for node in tree.body
         )
-    return total
+        for node in tree.body:
+            if not (isinstance(node, ast.FunctionDef) and node.name.startswith("test_")):
+                continue
+            total += 1
+            if module_skipped or any(_is_skip_decorator(d) for d in node.decorator_list):
+                skipped += 1
+    return total, skipped
 
 
 def check_test_count(text: str) -> list:
     errors = []
-    actual = count_tests()
+    actual_total, actual_skipped = count_tests()
+    actual_passed = actual_total - actual_skipped
 
     # 只认"后端"的声明：含 pytest 的行里的 N passed + 目录树里的 N 个测试。
     # 前端那行 `npm run test  # 5 passed` 数量不同，不能混进来。
@@ -85,8 +108,12 @@ def check_test_count(text: str) -> list:
     if not claimed:
         errors.append("README 未声明后端测试数量，无法校验（建议写明 `pytest -q  # N passed`）")
     for number in sorted(claimed):
-        if int(number) != actual:
-            errors.append(f"测试数量不一致：README 写 {number}，实际 {actual} 个测试函数")
+        value = int(number)
+        if value == actual_passed or value == actual_total:
+            continue
+        errors.append(
+            f"测试数量不一致：README 写 {value}，实际 {actual_passed} passed / {actual_total} 个测试函数"
+        )
     return errors
 
 

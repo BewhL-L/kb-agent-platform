@@ -102,6 +102,29 @@ class _Message:
             self.reasoning_content = reasoning_content
 
 
+class _ToolFunction:
+    def __init__(self, name, arguments):
+        self.name = name
+        self.arguments = arguments
+
+
+class _ToolCall:
+    """对齐 OpenAI SDK 的 tool_call 结构：id / type / function.name / function.arguments"""
+
+    def __init__(self, call_id, name, arguments):
+        self.id = call_id
+        self.type = "function"
+        self.function = _ToolFunction(name, arguments)
+
+
+# 工具调用脚本：每次 create 前 pop 一条，模拟"模型要求调用工具"
+_FAKE_TOOL_SCRIPT: list = []
+# 记录每次请求的 messages，用于断言工具结果是否回灌
+_FAKE_RECORDED_CALLS: list = []
+# 脚本用完后返回的最终答案
+_FAKE_FINAL_TEXT = [None]
+
+
 class _Choice:
     def __init__(self, message):
         self.message = message
@@ -145,6 +168,18 @@ class _Completions:
                 for ch in "这是测试答案":
                     yield _StreamChunk(ch)
             return _gen()
+
+        _FAKE_RECORDED_CALLS.append(kwargs.get("messages", []))
+        # 带工具且还有脚本：返回一个 tool_calls 响应，逼 Agent 进入执行分支
+        if kwargs.get("tools") and _FAKE_TOOL_SCRIPT:
+            spec = _FAKE_TOOL_SCRIPT.pop(0)
+            return _ChatResponse(_Message(None, tool_calls=[
+                _ToolCall(
+                    f"call_{len(_FAKE_RECORDED_CALLS)}",
+                    spec["name"],
+                    spec.get("arguments", "{}"),
+                )
+            ]))
         # 推理模型：返回独立的思考链字段
         model = str(kwargs.get("model", ""))
         if "r1" in model or "thinking" in model or "reason" in model:
@@ -152,8 +187,8 @@ class _Completions:
                 "这是推理后的最终答案",
                 reasoning_content="首先分析问题，然后检索资料，最后得出结论。",
             ))
-        # 带工具的请求：默认不调用工具，直接给答案
-        return _ChatResponse(_Message("这是测试答案"))
+        # 带工具的请求：脚本用完后给最终答案
+        return _ChatResponse(_Message(_FAKE_FINAL_TEXT[0] or "这是测试答案"))
 
 
 class _Chat:
@@ -292,6 +327,39 @@ from fastapi.testclient import TestClient
 
 from app.database import Base, engine
 from app.main import app
+
+
+class _ToolScript:
+    """用法：tool_script([{"name": ..., "arguments": "..."}], final="最终答案")"""
+
+    def __init__(self):
+        self.calls = _FAKE_RECORDED_CALLS
+
+    def __call__(self, steps, final="这是测试答案"):
+        _FAKE_TOOL_SCRIPT.clear()
+        _FAKE_RECORDED_CALLS.clear()
+        _FAKE_TOOL_SCRIPT.extend(steps)
+        _FAKE_FINAL_TEXT[0] = final
+
+    @staticmethod
+    def tool_messages():
+        """取出所有回灌给模型的 role=tool 消息"""
+        out = []
+        for call in _FAKE_RECORDED_CALLS:
+            for message in call:
+                if isinstance(message, dict) and message.get("role") == "tool":
+                    out.append(message)
+        return out
+
+
+@pytest.fixture(scope="function")
+def tool_script():
+    """让假模型先请求调用工具、再给最终答案（测试桩，不依赖真实模型）"""
+    script = _ToolScript()
+    yield script
+    _FAKE_TOOL_SCRIPT.clear()
+    _FAKE_RECORDED_CALLS.clear()
+    _FAKE_FINAL_TEXT[0] = None
 
 
 @pytest.fixture(scope="function")
