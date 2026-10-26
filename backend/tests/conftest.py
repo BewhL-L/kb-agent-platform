@@ -280,6 +280,13 @@ for _var in ("BM25_INDEX_DIR", "EVAL_REPORT_DIR", "UPLOAD_DIR"):
 # ============================================================
 # 4. fixtures
 # ============================================================
+# 让 `import app` 在任何调用方式下都成立：
+#   `python -m pytest` 会把 CWD 加进 sys.path，但 console script（CI 里的 `pytest`）不会，
+#   于是 CI 报 `ModuleNotFoundError: No module named 'app'`。这里显式补上 backend 目录。
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _BACKEND_DIR not in sys.path:
+    sys.path.insert(0, _BACKEND_DIR)
+
 import pytest
 from fastapi.testclient import TestClient
 

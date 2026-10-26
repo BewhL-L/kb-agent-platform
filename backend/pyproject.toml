@@ -20,4 +20,6 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# 把 backend 目录加入 sys.path：否则用 console script `pytest` 跑时 import app 会失败
+pythonpath = ["."]
 filterwarnings = ["ignore::DeprecationWarning"]
