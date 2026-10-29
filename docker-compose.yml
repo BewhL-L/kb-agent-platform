@@ -5,19 +5,22 @@ name: knowledge-base-platform
 #   2. 所有「运行期会变」的状态统一落在 backend/data/，backend 与 celery-worker 共享同一份
 #      （BM25 索引、Embedding 缓存、长期记忆、评测报告）——否则 worker 建的索引 API 看不到
 #   3. 真正不可变的数据（业务库、向量、文件）分别放 postgres / qdrant / backend/uploads
+#   4. 端口默认只绑 127.0.0.1（仅本机可访问）。需要局域网/手机访问时，把对应行的
+#      "127.0.0.1:80:80" 改成 "80:80"，并自行确认网络环境可信。
+#   5. 不设 container_name：容器名由 Compose 自动生成为 <项目名>-<服务名>-<序号>，
+#      这样才能 --scale 扩容，也才能用不同项目名同时跑 dev/prod 两套。
 
 services:
   # ========== PostgreSQL：业务数据库 ==========
   postgres:
     image: postgres:16-alpine
-    container_name: kb-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: kb_password
       POSTGRES_DB: knowledge_base
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -29,11 +32,10 @@ services:
   # ========== Redis：缓存 + 消息队列 ==========
   redis:
     image: redis:7-alpine
-    container_name: kb-redis
     restart: unless-stopped
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -44,32 +46,41 @@ services:
 
   # ========== Qdrant：向量数据库 ==========
   qdrant:
-    image: qdrant/qdrant:latest
-    container_name: kb-qdrant
+    # 固定小版本：latest 会在某次 pull 后行为漂移，向量数据格式不保证向后兼容
+    image: qdrant/qdrant:v1.19.2
     restart: unless-stopped
     ports:
-      - "6333:6333"   # HTTP API
-      - "6334:6334"   # gRPC
+      - "127.0.0.1:6333:6333"   # HTTP API
+      - "127.0.0.1:6334:6334"   # gRPC
     volumes:
       - qdrant_data:/qdrant/storage
+    # qdrant 官方镜像内没有 curl/wget，只能用 bash 的 /dev/tcp 探活
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   # ========== 后端服务（FastAPI） ==========
   backend:
     build: ./backend
-    container_name: kb-backend
     restart: unless-stopped
     env_file:
       - ./backend/.env
     # 启动前把库升到 head：空库建全、老库自动 stamp、已纳管则幂等升级
     command: sh -c "python scripts/db_bootstrap.py && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./backend/uploads:/app/uploads
       - ./backend/data:/app/data
     environment:
       # 容器内不是开发环境：关闭 DEBUG，避免把堆栈直接回给客户端
       - DEBUG=false
+      # 异步模式：以 Compose 为准，不依赖 .env 里的值。
+      # 基础版没有 celery-worker，必须是 thread；prod overlay 会覆盖成 celery。
+      - ASYNC_MODE=thread
       # 数据库：Docker 网络内用服务名 postgres
       - DATABASE_URL=postgresql+psycopg2://postgres:kb_password@postgres:5432/knowledge_base
       # Redis：Docker 网络内用服务名 redis
@@ -97,15 +108,14 @@ services:
       redis:
         condition: service_healthy
       qdrant:
-        condition: service_started
+        condition: service_healthy
 
   # ========== 前端服务（Nginx 托管 + 反向代理） ==========
   frontend:
     build: ./frontend
-    container_name: kb-frontend
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "127.0.0.1:80:80"
     depends_on:
       backend:
         condition: service_healthy

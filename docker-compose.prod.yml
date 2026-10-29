@@ -15,7 +15,6 @@ services:
   # Celery worker：异步执行文档解析 / 切片 / 向量化 / Wiki 编译
   celery-worker:
     build: ./backend
-    container_name: kb-celery
     restart: unless-stopped
     command: celery -A app.tasks.celery_app:celery_app worker --loglevel=info --concurrency=2
     env_file:
@@ -43,7 +42,7 @@ services:
       redis:
         condition: service_healthy
       qdrant:
-        condition: service_started
+        condition: service_healthy
       # 等 backend 完成迁移并健康后再起 worker，避免并发跑迁移
       backend:
         condition: service_healthy
