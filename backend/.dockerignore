@@ -6,4 +6,6 @@ venv/
 uploads/*
 chroma_db/*
 .env
+.env.*
+.env.bak*
 .git

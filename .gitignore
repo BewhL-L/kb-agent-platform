@@ -26,7 +26,11 @@ backend/long_memory.json
 
 # 环境变量
 .env
+.env.*
+.env.bak*
 backend/.env
+backend/.env.*
+backend/.env.bak*
 
 # Node
 node_modules/
@@ -53,3 +57,6 @@ Thumbs.db
 
 # 私有文档：只允许放在 项目前期构建/ 下，禁止进入仓库
 项目学习指导书.md
+
+# AI 协作工具的工作区（含会话记忆），不属于项目产物
+.workbuddy/

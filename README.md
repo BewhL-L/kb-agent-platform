@@ -64,9 +64,14 @@ Vue 3 + TS (Element Plus / Pinia / ECharts)
 cp backend/.env.example backend/.env
 # 至少填 LLM_API_KEY / LLM_BASE_URL / LLM_MODEL（任意 OpenAI 兼容服务）
 
+python scripts/preflight.py --fix   # 启动前体检：拦 .env 变目录、补建 uploads/data
 docker compose up -d --build
 # 前端 http://localhost     后端文档 http://localhost:8000/docs
 ```
+
+`scripts/preflight.py` 是针对 Compose bind mount 的保险丝：源路径不存在时 Docker 会**静默建空目录**，
+backend 目录下的 .env 一旦变成目录，`env_file` 会直接报 `is a directory`，且报错信息不会指向真因。
+该脚本还会检查 `.env` 是否为合法 UTF-8（防止 GBK 存盘/双重编码把配置值写坏）。
 
 启用 Celery 异步处理（文档量大时）：
 
@@ -74,6 +79,30 @@ docker compose up -d --build
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 # 数据库迁移已内置在 backend 启动命令里（scripts/db_bootstrap.py），无需手动执行
 ```
+
+### 端口与访问范围
+
+所有端口默认只绑 `127.0.0.1`，即**只有本机能访问**，同局域网的手机/同事访问不到：
+
+| 服务 | 端口 | 说明 |
+|---|---|---|
+| frontend | 80 | 应用入口 `http://localhost` |
+| backend | 8000 | API 文档 `http://localhost:8000/docs` |
+| postgres | 5432 | 仅本机 |
+| redis | 6379 | 仅本机 |
+| qdrant | 6333 / 6334 | 仅本机，**无鉴权** |
+
+需要用手机或其他电脑演示时，把 `docker-compose.yml` 里对应行的 `"127.0.0.1:80:80"` 改成 `"80:80"`。
+除前端外不建议开放——Qdrant 与 Redis 都没有身份校验。
+
+容器名由 Compose 自动生成（形如 `knowledge-base-platform-backend-1`），不再写死 `kb-*`；
+命令里用服务名更稳：`docker compose exec backend …`、`docker compose logs -f backend`。
+
+`ASYNC_MODE` 以 Compose 为准：基础版写死 `thread`，prod overlay 覆盖为 `celery`。
+不要只改 `.env`——基础版没有 worker，改成 `celery` 会让文档永远停在 processing。
+
+需要域名 + HTTPS 时，参考 `docker/nginx.conf`（宿主机级 Nginx 示例，含 SSE 免缓冲）；
+仅用 localhost 时不需要它，前端容器内置的 Nginx 已经处理静态资源与 `/api/` 反代。
 
 本地开发（不依赖 Docker）：
 
@@ -133,6 +162,8 @@ frontend/
   tests/               # vitest 单元测试
 docker-compose.yml     # 开发/预发编排
 docker-compose.prod.yml# 生产 overlay（Celery worker）
+scripts/preflight.py   # 启动前体检（.env 类型/编码、bind mount 目录）
+docker/nginx.conf      # 可选：宿主机级 Nginx（HTTPS/域名）参考配置
 ```
 
 ## 已知限制
@@ -145,3 +176,6 @@ docker-compose.prod.yml# 生产 overlay（Celery worker）
 - 溯源校验用字符二元组对齐，对大幅改写的句子偏保守——它是提示，不是判决。
 - 检索缓存只做"片段级 + 版本号失效"，没有语义缓存；多实例必须用 Redis，否则各进程各一份。
 - A2A（Agent 互操作）默认关闭，避免公网暴露内部知识库。
+- 工程路径建议不超过 80 个字符且避免中文、空格与 `+`：本项目当前根路径 116 字符，
+  `frontend/node_modules` 下最长路径已达 267 字符，依赖 Windows 长路径开关才没报错；
+  同时中文路径会让 Docker Desktop 的 bind mount 变慢。迁移到 `D:\projects\kb` 之类的短路径可规避。
