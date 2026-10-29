@@ -121,7 +121,7 @@ cd frontend && npm install && npm run dev
 ```bash
 cd backend && ruff check app tests scripts    # lint（pyflakes 能抓 undefined name）
 cd backend && pytest -q                        # 105 passed
-cd backend && python scripts/check_docs.py     # 文档一致性（测试数/路径/接口）
+cd backend && python scripts/check_docs.py     # 文档一致性（测试数/路径/接口；支持 --json/--routes）
 cd frontend && npm run test                   # 5 passed（纯函数，vitest）
 cd frontend && npm run build                  # 含 vue-tsc 类型检查
 ```
