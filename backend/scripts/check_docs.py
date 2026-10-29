@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import os
 import re
 import subprocess
 import sys
@@ -39,8 +40,23 @@ from pathlib import Path
 # 项目本地配置（与上游 Skill 版本的唯一差异，上游更新时只需保持这段不动）
 # ══════════════════════════════════════════════════════════════════════════
 
+# 导入 app 之前固定环境：否则本地 .env 指向 postgres/qdrant，
+# 读路由表会在 create_engine 阶段炸掉（脚本只读路由，不需要真连库）。
+for _key, _value in (
+    ("LLM_API_KEY", "docs-check-dummy"),
+    ("DATABASE_URL", "sqlite:///./_docs_check.db"),
+    ("VECTOR_PROVIDER", "chroma"),
+    ("ASYNC_MODE", "thread"),
+    ("RATE_LIMIT_ENABLED", "false"),
+):
+    os.environ.setdefault(_key, _value)
+
 # 默认项目根：本文件位于 <root>/backend/scripts/check_docs.py
-DEFAULT_ROOT = Path(__file__).resolve().parents[2]
+# 被复制到别处调试时 parents[2] 可能越界，退回当前目录，避免导入即崩
+try:
+    DEFAULT_ROOT = Path(__file__).resolve().parents[2]
+except IndexError:
+    DEFAULT_ROOT = Path.cwd()
 
 # 废弃表述：值说明原因，报错时直接告诉人该改什么
 PROJECT_FORBIDDEN = {
