@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
-from .database import Base, engine
+from .database import Base, db_target, engine, wait_for_db
 from .middleware.rate_limit import RateLimitMiddleware
 from .routers import routers
 from .routers.embed import router as embed_router
@@ -25,13 +25,22 @@ from . import models  # noqa: F401
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期：启动时建表（仅开发模式；生产用 alembic upgrade head）"""
+    """应用生命周期：等待依赖就绪 → 建表 → 准备目录 → 关闭时释放连接池
+
+    注意 wait_for_db 必须放在最前面：依赖容器可能晚于本进程就绪（服务名尚未注册到
+    Docker 内嵌 DNS、PostgreSQL 正在 crash recovery），此时任何一次连接都会直接抛
+    OperationalError 让启动失败，表现为「重启一下就好了」的假象。
+    """
+    logger.info(f"数据库目标: {db_target()}")
+    wait_for_db()
     if settings.AUTO_CREATE_TABLES:
         Base.metadata.create_all(bind=engine)
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     os.makedirs(settings.VECTOR_DB_PATH, exist_ok=True)
     logger.info(f"{settings.APP_NAME} 启动完成")
     yield
+    engine.dispose()
+    logger.info(f"{settings.APP_NAME} 已关闭，连接池已释放")
 
 
 app = FastAPI(

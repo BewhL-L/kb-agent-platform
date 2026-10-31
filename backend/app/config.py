@@ -16,6 +16,13 @@ class Settings(BaseSettings):
     # 生产必须置 false，改用 `alembic upgrade head`——create_all 只建缺失的表，不会改已有表结构。
     AUTO_CREATE_TABLES: bool = True
 
+    # 启动期等待数据库的最长重试次数与退避区间（秒）。
+    # 默认 0.5→1→2→4→5… 累计约 2~2.5 分钟，覆盖容器 DNS 未注册、PG crash recovery、
+    # 数据库刚重启等瞬时故障。容器内如需更长窗口，用 DB_CONNECT_MAX_ATTEMPTS 覆盖。
+    DB_CONNECT_MAX_ATTEMPTS: int = 30
+    DB_CONNECT_BASE_DELAY: float = 0.5
+    DB_CONNECT_MAX_DELAY: float = 5.0
+
     # JWT
     SECRET_KEY: str = "your-secret-key-change-this-in-production"
     ALGORITHM: str = "HS256"

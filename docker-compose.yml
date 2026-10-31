@@ -23,11 +23,15 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    # 停机留出干净 shutdown 的时间：被硬杀会让下次启动走 crash recovery，
+    # 在恢复窗口内后端连不上库（日志里表现为 database system is starting up）
+    stop_grace_period: 30s
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d knowledge_base"]
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
   # ========== Redis：缓存 + 消息队列 ==========
   redis:
@@ -100,8 +104,10 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).status == 200 else 1)"]
       interval: 10s
       timeout: 5s
-      retries: 10
-      start_period: 30s
+      retries: 12
+      # db_bootstrap 与 lifespan 内均有约 2 分钟的退避等待，这段时间的不健康不计入
+      start_period: 90s
+    stop_grace_period: 20s
     depends_on:
       postgres:
         condition: service_healthy

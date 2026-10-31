@@ -26,12 +26,17 @@ from sqlalchemy import inspect  # noqa: E402
 
 from app import models  # noqa: E402,F401  确保 metadata 完整
 from app.config import settings  # noqa: E402
-from app.database import engine  # noqa: E402
+from app.database import db_target, engine, wait_for_db  # noqa: E402
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def main() -> int:
+    # 容器入口先于数据库就绪是常态（服务名未注册 / PG 正在 crash recovery）。
+    # 这里先退避等待，避免 bootstrap 直接抛 OperationalError 让容器退出、
+    # 再靠 restart 策略反复重启去"碰运气"。
+    wait_for_db()
+
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
     has_version = "alembic_version" in tables
@@ -43,7 +48,7 @@ def main() -> int:
     # 保证从任何目录调用都能找到 migrations/
     config.set_main_option("script_location", os.path.join(BACKEND_DIR, "migrations"))
 
-    print(f"[db_bootstrap] url={settings.DATABASE_URL}")
+    print(f"[db_bootstrap] url={db_target()}")
     print(f"[db_bootstrap] 现有表 {len(tables)} 张，alembic_version={'有' if has_version else '无'}")
 
     if not has_version and has_app_tables:
