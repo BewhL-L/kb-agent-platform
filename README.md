@@ -80,6 +80,9 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 # 数据库迁移已内置在 backend 启动命令里（scripts/db_bootstrap.py），无需手动执行
 ```
 
+> 开发环境怎么配（Docker/PyPI 镜像源、代理与带宽、WSL 软链、Git 常见坑）以及历史排障记录，
+> 见项目私有文档 `项目前期构建/排障记录/`（该目录不在本仓库内）。
+
 ### 端口与访问范围
 
 所有端口默认只绑 `127.0.0.1`，即**只有本机能访问**，同局域网的手机/同事访问不到：
