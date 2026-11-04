@@ -107,26 +107,47 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 需要域名 + HTTPS 时，参考 `docker/nginx.conf`（宿主机级 Nginx 示例，含 SSE 免缓冲）；
 仅用 localhost 时不需要它，前端容器内置的 Nginx 已经处理静态资源与 `/api/` 反代。
 
-本地开发（不依赖 Docker）：
+本地开发（后端/前端进程在宿主机，Postgres/Redis/Qdrant 用 Docker）：
 
 ```bash
+# 本地裸跑仍用 Docker 的 Postgres/Redis/Qdrant（端口已绑 127.0.0.1）
+docker compose up -d postgres redis qdrant
+
 cd backend
-python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
-# .env 中改 DATABASE_URL=sqlite:///./knowledge_base.db、VECTOR_PROVIDER=chroma
+python3.11 -m venv .venv       # 若提示找不到：先 uv python install 3.11；python.org 安装的可用 py -3.11
+.venv/Scripts/python -m pip install -r requirements.txt
+
+# 不要改 backend/.env（Docker 也读同一份）。用环境变量把容器名换成 localhost：
+export DATABASE_URL="postgresql+psycopg2://postgres:kb_password@localhost:5432/knowledge_base"
+export REDIS_URL="redis://localhost:6379/0"
+export QDRANT_URL="http://localhost:6333"
+export VECTOR_PROVIDER="qdrant"
+
 .venv/Scripts/python scripts/db_bootstrap.py   # 建表 / 升级（空库建全、老库自动 stamp）
 .venv/Scripts/python -m uvicorn app.main:app --reload
 
-cd frontend && npm install && npm run dev
+cd frontend
+npm ci
+npm run dev
 ```
+
+> Windows 终端不是 Git Bash 时，把 `export KEY=value` 改成设置同名环境变量；密码与仓库根 `.env` 的 `POSTGRES_PASSWORD` 一致。
+
+> **Python 版本以 3.11 为准**（镜像内是 3.11.18）。不要用 3.12+ 装全量 `requirements.txt`：
+> `psycopg2-binary==2.9.9` 没有 cp312+ 的预编译 wheel，会退化成源码编译并报错。
+> 本地 `.venv` 已按 3.11 建好；若重建，必须写死解释器：`python3.11 -m venv .venv`。
+> 只用 SQLite/测试替身跑单测也不行——测试仍会 import `chromadb`、`jieba`，最小集容易制造“能跑测试、不能启动服务”的假象。
 
 ## 测试
 
 ```bash
-cd backend && ruff check app tests scripts    # lint（pyflakes 能抓 undefined name）
-cd backend && pytest -q                        # 105 passed
-cd backend && python scripts/check_docs.py     # 文档一致性（测试数/路径/接口；支持 --json/--routes）
-cd frontend && npm run test                   # 5 passed（纯函数，vitest）
-cd frontend && npm run build                  # 含 vue-tsc 类型检查
+cd backend && .venv/Scripts/python -m pytest -q          # 117 passed
+cd backend && .venv/Scripts/python scripts/check_docs.py # 文档一致性（测试数/路径/接口）
+cd frontend && npm ci && npm run test                     # 5 passed（纯函数，vitest）
+cd frontend && npm run build                              # 含 vue-tsc 类型检查
+# Windows 若 build 报 esbuild `Access is denied`：TEMP=.tmp TMP=.tmp npm run build
+# lint 需要额外装 ruff（CI 单独装）：.venv/Scripts/python -m pip install ruff==0.17.2
+# 然后：cd backend && .venv/Scripts/python -m ruff check app tests scripts
 ```
 
 测试里有六道回归门：
