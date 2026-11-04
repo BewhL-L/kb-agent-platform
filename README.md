@@ -230,6 +230,8 @@ docker/nginx.conf      # 可选：宿主机级 Nginx（HTTPS/域名）参考配�
 - `BM25_MIN_SCORE`（默认 0.5）是按 IDF 公式推的起点，**依赖语料**：小语料下 IDF 整体偏小，阈值调高会误杀正常词，接入真实知识库后应用 `test_eval_regression.py` 的 Hit@3 重新标定。
 - 凭据吊销记录存在 Redis，单进程内存缓存模式下**重启即失效**；多副本部署必须配 Redis。
 - 文档原文经 `/uploads` 静态目录访问，未做签名 URL，多租户场景需要补。
+- 前端依赖审计剩 1 个 moderate：`echarts 5.6.0` 的 XSS 修复需跨大版本（`echarts 6.1` + `vue-echarts 8.3`），升级前必须做图表页视觉回归；公网部署前处理。
+- Docker 基础镜像（`nginx:alpine` / `postgres:16-alpine` / `redis:7-alpine` / `python:3.11-slim` / `node:20-alpine`）当前未固定 digest；生产部署前固定到 patch tag 或 digest，避免构建漂移。
 - 溯源校验用字符二元组对齐，对大幅改写的句子偏保守——它是提示，不是判决。
 - 检索缓存只做"片段级 + 版本号失效"，没有语义缓存；多实例必须用 Redis，否则各进程各一份。
 - `EMBEDDING_CACHE_*` 的裁剪策略是 FIFO 而非 LRU，热点 key 可能被淘汰；命中率成为瓶颈时再换。
