@@ -56,13 +56,18 @@ def test_retrieval_cache_hit_and_invalidate(client, registered_user, monkeypatch
     from app.services.vector_store import vector_store
 
     calls = {"n": 0}
-    original_query = vector_store.query
+    # 计数点选 `_embed` 而不是 `query`：
+    # 一是"有没有真的进向量路"这件事的唯一必经点是 embedding（无论是 query 还是
+    # query_batch 都要先算向量）；二是 `query` 只是其中一种实现——多查询改写改走
+    # 一次批量 `query_batch` 之后，继续数 `query` 会永远得到 0，
+    # 测试会以"缓存永远命中"的姿态假通过。
+    original_embed = vector_store._embed
 
-    def counting_query(*args, **kwargs):
+    def counting_embed(texts):
         calls["n"] += 1
-        return original_query(*args, **kwargs)
+        return original_embed(texts)
 
-    monkeypatch.setattr(vector_store, "query", counting_query)
+    monkeypatch.setattr(vector_store, "_embed", counting_embed)
 
     question = "退货从哪天开始算？"
     first = rag_service.retrieve(kb_id, question)

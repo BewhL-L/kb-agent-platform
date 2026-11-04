@@ -1,4 +1,5 @@
 """智能问答路由：普通问答 + 流式问答（RAG / Agentic RAG）"""
+import asyncio
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,8 +12,11 @@ from ..models import Conversation, KnowledgeBase, Message, User
 from ..schemas import ChatRequest, FeedbackCreate, GlobalChatRequest
 from ..services import AgentService, RAGService, agent_service, rag_service
 from ..utils.deps import get_current_user, require_kb_role
+from ..utils.logger import get_logger
 
 router = APIRouter(tags=["智能问答"])
+
+logger = get_logger(__name__)
 
 # 工具名 -> 前端状态文案
 _TOOL_LABEL = {
@@ -224,6 +228,16 @@ async def chat_stream(
                     full_answer += chunk
                     yield f"data: {json.dumps({'token': chunk}, ensure_ascii=False)}\n\n"
 
+            # 溯源校验：非流式的 /chat 与 /chat/reasoning 一直有，流式此前完全没有。
+            # 而前端默认走的就是流式——等于"这句话有没有出处"只在一个用户不用的接口里存在。
+            grounding = None
+            if settings.GROUNDING_ENABLED and full_answer:
+                try:
+                    from ..services.grounding_service import grounding_service
+                    grounding = grounding_service.verify(full_answer, sources_data)
+                except Exception as e:
+                    logger.warning(f"流式溯源校验失败，本次跳过：{e}")
+
             # 更新数据库消息
             _db = SessionLocal()
             try:
@@ -240,9 +254,22 @@ async def chat_stream(
             finally:
                 _db.close()
 
-            yield f"data: {json.dumps({'done': True, 'conversation_id': conv_id, 'message_id': message_id, 'sources': sources_data}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'done': True, 'conversation_id': conv_id, 'message_id': message_id, 'sources': sources_data, 'grounding': grounding}, ensure_ascii=False)}\n\n"
+        except asyncio.CancelledError:
+            # 客户端主动断开（关页面、切走、网络断）——这条**走不到下面那个 except**：
+            # Python 3.8+ 的 CancelledError 继承 BaseException，不是 Exception。
+            # 不单独兜住，用户看到的就是一条点不开、删不掉的空白气泡。
+            _persist_stream_failure(message_id, full_answer, sources_data)
+            raise  # 取消必须向上传播，否则 Starlette 无法正确收尾
         except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
+            # 两点必须做，否则一次异常会留下两个伤疤：
+            #   1. 落库。预建的 assistant 消息不写回就会永远停在空 content，
+            #      会话里出现一条点不开、删不掉的空白气泡。
+            #   2. 把 conversation_id 带出去。前端拿不到它，下次提问就会新建会话，
+            #      一次异常变成两条会话记录。
+            logger.exception(f"流式问答中断（message_id={message_id}）：{e}")
+            _persist_stream_failure(message_id, full_answer, sources_data)
+            yield f"data: {json.dumps({'error': str(e), 'conversation_id': conv_id, 'message_id': message_id}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         generate(),
@@ -299,6 +326,31 @@ def submit_feedback(
     return {"message": "反馈成功"}
 
 
+def _persist_stream_failure(message_id: int, partial: str, sources_data: list) -> None:
+    """流式生成异常/中断时把已产出的部分写回数据库，避免留下空白消息。
+
+    只写用户真正看到过的内容（partial）。为什么不全填一句"生成失败"：
+    这条消息之后会作为多轮上下文被取回，掺入工程标记只会污染后续 Prompt。
+    真正的失败原因在日志里（`logger.exception`）。
+
+    唯一例外是 `partial` 为空——一个字都没产出时，气泡里必须有个占位，
+    否则前端渲染出来是一片空白，用户以为是自己点坏了。
+    """
+    _db = SessionLocal()
+    try:
+        msg = _db.query(Message).filter(Message.id == message_id).first()
+        if msg is None:
+            return
+        msg.content = partial or "（本次回答生成中断，未产生内容）"
+        msg.sources = json.dumps(sources_data or [], ensure_ascii=False)
+        _db.commit()
+    except Exception as e:
+        # 回写失败不能再抛——外层已经在处理原始异常了
+        logger.warning(f"流式失败回写数据库时再次失败（message_id={message_id}）：{e}")
+    finally:
+        _db.close()
+
+
 def _get_or_create_conv(db: Session, data: ChatRequest, user_id: int) -> Conversation:
     if data.conversation_id:
         conv = db.query(Conversation).filter(
@@ -315,8 +367,24 @@ def _get_or_create_conv(db: Session, data: ChatRequest, user_id: int) -> Convers
 
 
 def _get_history(db: Session, conv_id: int) -> list:
+    """取最近 12 条消息作为多轮上下文。
+
+    这里必须过 `neutralize`：历史消息是**用户原文存库后再取回**的，
+    如果某一轮输入里带了 `<|im_start|>system` 之类角色标记，它会被原样存下来，
+    之后**每一轮**都重新注入到 system 消息附近——这是一次成功、永久生效的注入。
+    `guard.py` 原本只覆盖了检索内容，漏掉了这条最容易被反复利用的路径。
+
+    取舍：只在「读出」时清洗，不动机器里的原始消息，这样用户在界面上看到的仍是自己写的内容；
+    代价是那 4 个角色标记在展示层不会被过滤。对知识库问答来说这是可接受的。
+    """
+    from ..utils.guard import neutralize
+
     msgs = db.query(Message).filter(
         Message.conversation_id == conv_id
     ).order_by(Message.id.desc()).limit(12).all()
     msgs.reverse()
-    return [{"role": m.role, "content": m.content} for m in msgs if m.content]
+    return [
+        {"role": m.role, "content": neutralize(m.content)}
+        for m in msgs
+        if m.content
+    ]

@@ -9,7 +9,7 @@ from typing import Dict, List
 from sqlalchemy.orm import Session
 
 from ..models import Document
-from ..services.vector_store import VectorStore
+from ..services.vector_store import VectorStore, get_vector_store
 from ..utils.logger import get_logger
 from .conflict_detector import ConflictDetector
 from .entity_extractor import EntityExtractor
@@ -30,7 +30,10 @@ class WikiCompiler:
         conflict_detector: ConflictDetector = None,
         linker: Linker = None,
     ):
-        self.vector_store = vector_store or VectorStore()
+        # 必须走工厂，不要写 VectorStore()：
+        # 直接实例化永远是 Chroma，生产用 qdrant 时这里会去读一个空库，
+        # `get_document_chunks` 返回空 → 文档"编译成功"但一页都不生成，日志里只有 0。
+        self.vector_store = vector_store or get_vector_store()
         self.extractor = extractor or EntityExtractor()
         self.page_manager = page_manager or PageManager()
         self.conflict_detector = conflict_detector or ConflictDetector()

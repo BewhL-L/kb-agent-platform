@@ -67,6 +67,12 @@ class Settings(BaseSettings):
     # Embedding 缓存（相同文本不重复调用，省钱省时）
     EMBEDDING_CACHE_ENABLED: bool = True
     EMBEDDING_CACHE_PATH: str = "./embedding_cache.json"
+    # 缓存条目上限。超过后按插入序淘汰最老的条目——查询改写每轮都产生新文本，
+    # 不设上限的话这个 JSON 会一直长，最后连启动加载都变慢。
+    EMBEDDING_CACHE_MAX_ENTRIES: int = 20000
+    # 落盘节流（秒）。一次检索里 N 个改写查询就是 N 次 _embed，
+    # 每次都全量 dump 同一个文件属于纯浪费；进程正常退出时 atexit 会强制落盘一次。
+    EMBEDDING_CACHE_FLUSH_INTERVAL: int = 30
 
     # 接口限流（单机内存滑动窗口）
     RATE_LIMIT_ENABLED: bool = True
@@ -81,12 +87,28 @@ class Settings(BaseSettings):
     BM25_INDEX_DIR: str = "./bm25_index"
     BM25_WEIGHT: float = 0.4
     VECTOR_WEIGHT: float = 0.6
+    # 稀疏路相关性下限：低于该 BM25 分的候选不进 RRF 融合。
+    # 稠密路一直有 SIMILARITY_THRESHOLD，稀疏路早期只判 >0，一个高频常见词命中
+    # 也能挤进精排候选池。这里取 0.5：本项目的 BM25+ 式 IDF 为 log(1+(N-n+0.5)/(n+0.5))，
+    # 0.5 大致对应"只在超过约六成切片里出现的词"被过滤，属于明显无区分度的命中。
+    BM25_MIN_SCORE: float = 0.5
+    # 但绝对分会随语料规模变化：语料只有 1-2 个切片时，再准的命中也就 0.2~0.3 分，
+    # 固定 0.5 会把候选全杀光、检索返回空。所以再加一个相对下限——
+    # 实际生效的门槛 = min(BM25_MIN_SCORE, 头名分数 × 本比例)。
+    # 大语料靠绝对值（滤常见词），小语料自动退化为"相对头名 25%"，不会全灭。
+    # 改动这两个值后都必须重跑 test_eval_regression 对比 Hit@3，不要凭手感调。
+    BM25_MIN_SCORE_RATIO: float = 0.25
     RRF_K: int = 60
     FETCH_K: int = 20          # 融合前每路召回数量
     # Rerank 精排
     RERANK_ENABLED: bool = True
     RERANK_PROVIDER: str = "llm"   # llm=用对话模型打分；cohere=Cohere Rerank API
     RERANK_TOP_N: int = 5
+    # 精排时每个候选送进模型的最大字符数。
+    # 精排只判断"这段和问题相关吗"，不需要读完整父块：父子分块下 text 是 1000 字父块，
+    # 20 个候选拼进一次精排约 2 万字符（≈1.2–1.5 万 token）。改用子块 + 截断后
+    # token 降 60–75%，排序质量不变——相关度信号在 200 字内已经出现。
+    RERANK_MAX_CHARS: int = 200
     COHERE_API_KEY: str = ""
     # 查询改写
     QUERY_REWRITE_ENABLED: bool = True

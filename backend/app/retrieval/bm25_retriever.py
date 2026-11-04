@@ -108,15 +108,27 @@ class BM25Index:
         chunks: List[str],
         document_id: int,
         document_name: str,
+        parents: List[str] = None,
     ) -> None:
-        """加入一个文档的切片；若该文档已存在则先移除（增量更新语义）"""
+        """加入一个文档的切片；若该文档已存在则先移除（增量更新语义）。
+
+        `parents` 是可选父块文本（父子分块时传，与 chunks 一一对齐）。
+
+        **索引粒度与返回粒度故意分开**：
+          - 打分用子块（250 字）：词频不被长文稀释，length 归一化不被父块长度拖累，
+            这正是 BM25 处理型号、专有名词这类精确词项的优势所在；
+          - 返回用父块（1000 字）：下游拼 Prompt 需要完整上下文，不能只给半句话。
+        早期版本直接拿父块建索引，等于把 BM25 的精度优势让掉了。
+        """
         self.remove_document(document_id)
         for idx, chunk in enumerate(chunks):
             terms = tokenize(chunk)
             tf = dict(Counter(terms))
+            parent = parents[idx] if parents and idx < len(parents) else chunk
             self.docs.append({
                 "key": f"doc{document_id}_{idx}",
-                "text": chunk,
+                "text": parent,
+                "child_text": chunk,
                 "document_id": document_id,
                 "document_name": document_name,
                 "tf": tf,
@@ -158,7 +170,7 @@ class BM25Index:
         return math.log(1 + (total - n + 0.5) / (n + 0.5))
 
     def search(self, query: str, top_k: int = None) -> List[Dict]:
-        """返回 BM25 相关性最高的片段：[{text, document_name, document_id, score}]"""
+        """返回 BM25 相关性最高的片段：[{text, child_text, document_name, document_id, score}]"""
         top_k = top_k or settings.TOP_K
         if not self.docs:
             return []
@@ -178,10 +190,28 @@ class BM25Index:
             if score > 0:
                 scored.append((score, d))
 
+        # 阈值过滤：把"只命中了高频常见词"的候选挡在 RRF 之前。
+        # 稠密路一直有 SIMILARITY_THRESHOLD，稀疏路此前只判 >0，两路是不对称的：
+        # 一个「的」「是」级别的词命中也能进候选池，最后靠精排兜底，纯属浪费精排额度。
+        #
+        # 为什么不是简单的 `score >= BM25_MIN_SCORE`：
+        # BM25 的绝对分数**随语料规模变化**。IDF = log(1 + (N-n+0.5)/(n+0.5))，
+        # 语料只有 1-2 个切片时，再准的命中也就 0.2~0.3 分；而 500 个切片里
+        # 一个只出现在 10% 切片中的词，单次命中就有 2 分以上。一个固定值要么
+        # 在小语料里把候选全杀光（检索直接返回空），要么在大语料里形同虚设。
+        #
+        # 所以取两者较小值作为下限：
+        #   - 大语料：绝对阈值生效，滤掉常见词；
+        #   - 小语料：退化为"相对头名 25%"，绝不因为语料小就全灭。
+        if scored:
+            top = max(s for s, _ in scored)
+            floor = min(settings.BM25_MIN_SCORE, top * settings.BM25_MIN_SCORE_RATIO)
+            scored = [(s, d) for s, d in scored if s >= floor]
         scored.sort(key=lambda x: x[0], reverse=True)
         return [
             {
                 "text": d["text"],
+                "child_text": d.get("child_text", d["text"]),
                 "document_name": d["document_name"],
                 "document_id": d["document_id"],
                 "score": round(s, 4),

@@ -41,9 +41,8 @@ class QdrantStore(VectorStore):
             timeout=settings.LLM_TIMEOUT,
             max_retries=settings.LLM_MAX_RETRIES,
         )
-        self._cache: Dict[str, List[float]] = {}
-        if settings.EMBEDDING_CACHE_ENABLED:
-            self._load_cache()
+        # 缓存状态与父类共用同一套（含节流与容量上限），别在这里另写一份
+        self._init_cache()
 
     def _collection_name(self, kb_id: int) -> str:
         return f"kb_{kb_id}"
@@ -138,20 +137,54 @@ class QdrantStore(VectorStore):
             )
         self.client.upsert(collection_name=self._collection_name(kb_id), points=points)
 
+        # BM25 用子块建索引（精度），返回父块（完整）；children 与 parents 一一对齐，
+        # 不要像早期版本那样先按 parent_index 去重，否则下标错位会让父块张冠李戴。
         try:
             from ..retrieval import hybrid_retriever
-            parents = []
-            seen_parents = set()
-            for r in records:
-                if r["parent_index"] not in seen_parents:
-                    seen_parents.add(r["parent_index"])
-                    parents.append(r["parent_content"])
-            hybrid_retriever.on_add(kb_id, parents, document_id, document_name)
+            hybrid_retriever.on_add(
+                kb_id,
+                child_texts,
+                document_id,
+                document_name,
+                parents=[r["parent_content"] for r in records],
+            )
         except Exception:
             pass
         return ids
 
     # ============ 检索 ============
+
+    def _to_results(self, hits) -> List[Dict]:
+        """把 Qdrant 的 hit 列表整理成统一结构（与 Chroma 版字段对齐）。
+
+        与父类同名方法返回同样的字段：`text` 是父块（喂生成），
+        `child_text` 是子块（喂精排），两者必须都带，否则下游要分叉判断用的哪家向量库。
+        """
+        formatted = []
+        seen_parents = set()
+        for hit in hits:
+            score = round(hit.score, 4)
+            if score < settings.SIMILARITY_THRESHOLD:
+                continue
+            payload = hit.payload or {}
+            doc_id = payload.get("document_id", 0)
+            parent_index = payload.get("parent_index")
+            dedup_key = (doc_id, parent_index) if parent_index is not None else (doc_id, hit.id)
+            if dedup_key in seen_parents:
+                continue
+            seen_parents.add(dedup_key)
+
+            child = payload.get("text", "")
+            formatted.append({
+                "text": payload.get("parent_content") or child,
+                "child_text": child,
+                "document_name": payload.get("document_name", "未知文档"),
+                "document_id": doc_id,
+                "score": score,
+                "char_start": payload.get("char_start", 0),
+                "char_end": payload.get("char_end", 0),
+            })
+        return formatted
 
     def query(
         self,
@@ -167,31 +200,40 @@ class QdrantStore(VectorStore):
             query_vector=query_vector,
             limit=top_k,
         )
+        return self._to_results(hits)
 
-        formatted = []
-        seen_parents = set()
-        for hit in hits:
-            score = round(hit.score, 4)
-            if score < settings.SIMILARITY_THRESHOLD:
-                continue
-            payload = hit.payload or {}
-            doc_id = payload.get("document_id", 0)
-            parent_index = payload.get("parent_index")
-            dedup_key = (doc_id, parent_index) if parent_index is not None else (doc_id, hit.id)
-            if dedup_key in seen_parents:
-                continue
-            seen_parents.add(dedup_key)
+    def query_batch(
+        self,
+        kb_id: int,
+        questions: List[str],
+        top_k: int = None,
+    ) -> List[List[Dict]]:
+        """多问题一次检索；embedding 只算一次（理由见 Chroma 版同名方法）。"""
+        questions = list(questions)
+        if not questions:
+            return []
+        top_k = top_k or settings.TOP_K
+        self._ensure_collection(kb_id)
+        vectors = self._embed(questions)
+        collection = self._collection_name(kb_id)
 
-            text = payload.get("parent_content") or payload.get("text", "")
-            formatted.append({
-                "text": text,
-                "document_name": payload.get("document_name", "未知文档"),
-                "document_id": doc_id,
-                "score": score,
-                "char_start": payload.get("char_start", 0),
-                "char_end": payload.get("char_end", 0),
-            })
-        return formatted
+        # 新版客户端用 search_batch，老版只能逐个 search。
+        # 差别只在网络往返次数，embedding 都已经合并成一次了。
+        try:
+            batches = self.client.search_batch(
+                collection_name=collection,
+                query_vectors=vectors,
+                limit=top_k,
+            )
+            return [self._to_results(hits) for hits in batches]
+        except (AttributeError, TypeError):
+            out: List[List[Dict]] = []
+            for vector in vectors:
+                hits = self.client.search(
+                    collection_name=collection, query_vector=vector, limit=top_k
+                )
+                out.append(self._to_results(hits))
+            return out
 
     # ============ 删除 ============
 

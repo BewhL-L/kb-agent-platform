@@ -52,16 +52,24 @@ class _FakeCollection:
         self.metas += metadatas
 
     def query(self, query_embeddings, n_results):
-        q = query_embeddings[0]
-        scored = sorted(
-            ((1 - _cosine(q, e), i) for i, e in enumerate(self.embs)),
-        )
-        top = scored[:n_results]
-        return {
-            "documents": [[self.docs[i] for _, i in top]],
-            "metadatas": [[self.metas[i] for _, i in top]],
-            "distances": [[d for d, _ in top]],
-        }
+        """与真实 Chroma 的契约保持一致：入参是一批向量，返回值按查询外层嵌套。
+
+        真实 `collection.query(query_embeddings=[e1, e2])` 返回
+        `documents: [[q1 的命中...], [q2 的命中...]]`。
+        早期这里只取 `query_embeddings[0]`：一旦上层把多查询改写合并成一次批量查询，
+        除第一条外的结果会全部丢失，而测试依然全绿——替身与真实实现契约不一致，
+        比没有替身更危险。
+        """
+        if query_embeddings and not isinstance(query_embeddings[0], (list, tuple)):
+            query_embeddings = [query_embeddings]  # 兼容单向量写法
+        documents, metadatas, distances = [], [], []
+        for q in query_embeddings:
+            scored = sorted((1 - _cosine(q, e), i) for i, e in enumerate(self.embs))
+            top = scored[:n_results]
+            documents.append([self.docs[i] for _, i in top])
+            metadatas.append([self.metas[i] for _, i in top])
+            distances.append([d for d, _ in top])
+        return {"documents": documents, "metadatas": metadatas, "distances": distances}
 
     def delete(self, where):
         did = where.get("document_id")

@@ -87,9 +87,11 @@ class RAGService:
         context_sections = []
 
         # 0. 长期记忆摘要（历史对话的压缩）
+        # 摘要由历史对话压缩而来，等于用户原文的二手拷贝：检索内容过 neutralize，
+        # 这条路径也得过，否则角色标记能借摘要长期驻留在 system 消息里。
         if memory_summary:
             context_sections.append(
-                "## 历史对话摘要\n" + wrap_context(memory_summary)
+                "## 历史对话摘要\n" + wrap_context(neutralize(memory_summary))
             )
 
         # 1. Wiki 结构化知识页面（高优先级，放最前）
@@ -123,6 +125,10 @@ class RAGService:
 
         return [
             {"role": "system", "content": system_content},
+            # 当前问题**故意不过 neutralize**，与上面三处不同：
+            # 它由已登录用户在本轮实时输入，注入自己的 prompt 对他没有收益。
+            # 会跨轮存活、会被别人写入的两条路径（历史消息、记忆摘要）才必须洗。
+            # 判断标准：看"这段文本是谁写的、会不会被重复使用"，而不是一律洗一遍。
             {"role": "user", "content": question},
         ]
 
@@ -261,8 +267,21 @@ class RAGService:
                 seen_texts.add(text)
                 s["kb_id"] = kb_id
                 merged.append(s)
-        merged.sort(key=lambda x: x.get("score", 0), reverse=True)
-        return merged[: settings.TOP_K + 3]
+
+        # 跨库合并只能按「精排秩」走，不能按 score 重排：
+        #   - 向量路的 score = 1 - cosine_distance，落在 [0, 1]
+        #   - BM25 路的 score 是 BM25 打分，理论上无上界（常见 5~15）
+        # 两套量纲混排的结果是 BM25 来源的片段系统性压过向量来源的片段，
+        # 而每个库内部已经做过 LLM 精排（rerank_rank），按 score 重排等于把精排结果丢掉。
+        # 关掉精排时 rerank_rank 不存在，退回原始插入序（仍可复现），再用 fusion_score 兜底。
+        ordered = list(enumerate(merged))
+        ordered.sort(
+            key=lambda it: (
+                it[1].get("rerank_rank", it[0]),
+                -float(it[1].get("fusion_score") or 0.0),
+            )
+        )
+        return [s for _, s in ordered][: settings.TOP_K + 3]
 
     async def chat_across_kbs(
         self,

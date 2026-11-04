@@ -20,6 +20,17 @@ RERANK_SYSTEM = (
 )
 
 
+def _short(candidate: Dict) -> str:
+    """精排送给模型的正文：优先子块，并截断到 RERANK_MAX_CHARS。
+
+    父子分块下 `candidate["text"]` 是 1000 字父块。20 个候选拼进一次精排约 2 万字符
+    （≈1.2–1.5 万 token），而精排要回答的只是"这段和问题相关吗"——相关度信号在
+    前 200 字里就出现了，后面那 800 字只是在把 token 账单垫高。
+    """
+    text = candidate.get("child_text") or candidate.get("text", "")
+    return text[: settings.RERANK_MAX_CHARS]
+
+
 def _parse_order(raw: str, n: int) -> List[int]:
     if not raw:
         return list(range(n))
@@ -35,7 +46,7 @@ def _parse_order(raw: str, n: int) -> List[int]:
 
 
 def llm_rerank(query: str, candidates: List[Dict], top_n: int) -> List[Dict]:
-    listing = "\n".join(f"[{i}] {c['text']}" for i, c in enumerate(candidates))
+    listing = "\n".join(f"[{i}] {_short(c)}" for i, c in enumerate(candidates))
     prompt = (
         f"查询：{query}\n候选段落：\n{listing}\n"
         f'请按相关度从高到低排序，输出 JSON 对象 {{"order": [编号...]}}，只输出 JSON。'
@@ -83,7 +94,7 @@ class Reranker:
         import cohere
 
         co = cohere.Client(settings.COHERE_API_KEY)
-        docs = [c["text"] for c in candidates]
+        docs = [_short(c) for c in candidates]
         r = co.rerank(
             model="rerank-multilingual-v3.0",
             query=query,

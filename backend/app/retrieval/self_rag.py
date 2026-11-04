@@ -90,7 +90,9 @@ class SelfRAG:
                 "suggested_query": question,
             }
         materials = "\n".join(
-            f"[{i + 1}] {s.get('text', '')[:300]}"
+            # 用子块而不是父块：这里只判断"资料够不够回答"，不需要读完整 1000 字父块。
+            # 与精排 (_short) 是同一个理由，只是截断长度不同。
+            f"[{i + 1}] {(s.get('child_text') or s.get('text', ''))[:300]}"
             for i, s in enumerate(sources)
         )
         raw = sync_chat(
@@ -114,16 +116,27 @@ class SelfRAG:
     def _merge(
         self, old: List[Dict], new: List[Dict]
     ) -> List[Dict]:
-        """合并两次检索结果，按文本去重"""
+        """合并两次检索结果，按文本去重后重排。
+
+        排序键必须是 `rerank_rank`，不能是 `score`：
+        两路召回（向量 cosine ∈ [0,1] / BM25 无上界）的 score 量纲不同，
+        混排会让 BM25 来源的片段一律排到前面，把两次检索各自的精排结果都作废。
+        没有 rerank_rank（关掉精排）时退回插入序，保证可复现。
+        """
         seen = {s.get("text", "") for s in old}
         merged = list(old)
         for s in new:
             if s.get("text", "") not in seen:
                 merged.append(s)
                 seen.add(s.get("text", ""))
-        # 按分数排序，保留 top
-        merged.sort(key=lambda x: x.get("score", 0), reverse=True)
-        return merged[: settings.TOP_K + 2]
+        ordered = list(enumerate(merged))
+        ordered.sort(
+            key=lambda it: (
+                it[1].get("rerank_rank", it[0]),
+                -float(it[1].get("fusion_score") or 0.0),
+            )
+        )
+        return [s for _, s in ordered][: settings.TOP_K + 2]
 
 
 self_rag = SelfRAG()

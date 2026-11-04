@@ -65,12 +65,21 @@ class HybridRetriever:
         queries = multi_query(question)
 
         # 稠密向量路（多查询合并去重）
-        from ..services.vector_store import vector_store
+        #
+        # 两个关键点，改之前想清楚：
+        #   1. 必须走 get_vector_store()，不能 `from ..services.vector_store import vector_store`。
+        #      后者是模块级 Chroma 单例，绕开了 VECTOR_PROVIDER。生产用 qdrant 时，
+        #      写入走 Qdrant、这里却查 Chroma，向量路会静默返回空、只剩 BM25 在扛，
+        #      表现为「答得出来但明显不如本地准」——没有任何报错。
+        #   2. 用 query_batch 而不是逐个 query：改写出来的查询每轮都是新文本，
+        #      embedding 缓存必然 miss，逐个查就是逐个网络往返。
+        from ..services.vector_store import get_vector_store
 
+        store = get_vector_store()
         vec_candidates: List[Dict] = []
         seen = set()
-        for q in queries:
-            for c in vector_store.query(kb_id, q, top_k=settings.FETCH_K):
+        for hit_list in store.query_batch(kb_id, queries, top_k=settings.FETCH_K):
+            for c in hit_list:
                 key = _key(c)
                 if key not in seen:
                     seen.add(key)
@@ -99,9 +108,21 @@ class HybridRetriever:
 
     # ===== 索引维护钩子（由 vector_store 触发）=====
 
-    def on_add(self, kb_id: int, chunks: List[str], document_id: int, document_name: str) -> None:
+    def on_add(
+        self,
+        kb_id: int,
+        chunks: List[str],
+        document_id: int,
+        document_name: str,
+        parents: List[str] = None,
+    ) -> None:
+        """索引新增切片。
+
+        `parents` 只在父子分块时传：BM25 用 `chunks`（子块）打分、用 `parents`（父块）返回。
+        两者必须等长且一一对齐——传之前不要自行去重，否则下标错位会让返回的父块张冠李戴。
+        """
         try:
-            BM25Index(kb_id).add(chunks, document_id, document_name)
+            BM25Index(kb_id).add(chunks, document_id, document_name, parents=parents)
         except Exception as e:
             logger.warning(f"BM25 索引更新失败：{e}")
 
