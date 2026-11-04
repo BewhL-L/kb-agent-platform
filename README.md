@@ -13,6 +13,7 @@
 | 模块 | 实现 | 关键接口 |
 |---|---|---|
 | 知识库管理 | 多知识库、RBAC 协作（owner / editor / viewer） | `POST /api/kb`、`/api/kb/{id}/members` |
+| 认证与安全 | JWT（`jti` + `iat`）、登出即吊销、分环境校验 `SECRET_KEY`、历史消息注入过滤 | `POST /api/auth/logout` |
 | 文档处理 | PDF / DOCX / TXT / MD / 图片；父块 1000 字、子块 250 字；异步线程或 Celery | `POST /api/kb/{id}/upload` |
 | 检索增强 | 向量 + BM25 双路召回、RRF 融合、LLM 精排、多查询改写、Self-RAG（可开关） | 内部 `HybridRetriever` |
 | 问答 | 普通 RAG / Agentic RAG / 推理模型（思考链）/ 流式 SSE / 跨库问答 | `POST /api/chat`、`/api/chat/stream` |
@@ -21,10 +22,10 @@
 | GraphRAG | 实体/关系/社区构建，局部检索与 map-reduce 全局检索（**独立入口，未接入主问答链路**） | `POST /api/graphrag/kb/{id}/build` |
 | 结构化回答 | 按模板（要点/对比表/时间线）输出严格 JSON，解析失败自动降级 | `POST /api/structured/generate` |
 | 评测 | 20 条金标集：关键词命中、上下文精确率/召回率、**拒答召回/误拒率**、LLM 裁判忠实度，可选 RAGAS | `POST /api/evaluation/run` |
-| 答案溯源 | 句子级 citation 覆盖率（字符二元组对齐，零成本、可复现），低置信自动标记 | `/api/chat` 返回 `grounding` |
-| 性能 | 检索走线程池不阻塞事件循环；片段级缓存 + 版本号失效；外键与复合索引 | `services/retrieval_cache.py` |
+| 答案溯源 | 句子级 citation 覆盖率（字符二元组对齐，零成本、可复现），低置信自动标记；**同步与流式一致** | `/api/chat`、`/api/chat/stream` 返回 `grounding` |
+| 性能 | 检索走线程池不阻塞事件循环；批量 embedding；精排输入截断；片段级缓存 + 版本号失效；外键与复合索引 | `services/retrieval_cache.py` |
 | Prompt 治理 | `Prompt(name, version, template)` 注册表，调用记录写入 `prompt_version` | `app/prompts/` |
-| 可观测 | 每次调用记录 token 与费用；Langfuse 追踪（可选） | `GET /api/stats/cost` |
+| 可观测 | 每次调用记录 token 与费用；Langfuse 追踪（可选）；`/api/health` 暴露缓存后端/向量库/异步模式 | `GET /api/stats/cost`、`GET /api/health` |
 
 ## 架构
 
@@ -51,6 +52,8 @@ Vue 3 + TS (Element Plus / Pinia / ECharts)
 3. **Agent 与 RAG 共用同一条检索链路**。Agent 的 `search_knowledge_base` 工具直接复用 `RAGService.retrieve`，两套入口不会出现“答得出来/答不出来”的割裂。
 4. **降级优先于报错**。LLM 重试耗尽、Rerank 解析失败、结构化输出非法、Celery 不可用，都有明确的降级路径；问答接口不会因为模型不听话而 500。
 5. **权限分三档落在统一出口**。`require_kb_role(db, kb_id, user, min_role)` 一处定义读/写/管理边界，27 个调用点全部走它，避免各写各的 `if kb.user_id == user.id`。
+6. **跨来源排序只比名次，不比分数**。向量相似度落在 `[0, 1]`，BM25 分无上界，把两者放进同一个 `sort` 会让其中一路无条件胜出。融合用 RRF（对量纲不敏感），有精排时排序键是 `rerank_rank`，原始分只做 tie-break。
+7. **单一入口是架构不变量**。向量库一律经 `get_vector_store()`，禁止 import 模块级单例——否则 `VECTOR_PROVIDER` 就形同虚设：写入进 Qdrant、查询打 Chroma，向量路静默返回空且不报错。同理，打分的粒度（250 字子块）与返回的粒度（1000 字父块）是两个字段，不复用。
 
 ## 技术栈
 
@@ -62,16 +65,24 @@ Vue 3 + TS (Element Plus / Pinia / ECharts)
 
 ```bash
 cp backend/.env.example backend/.env
-# 至少填 LLM_API_KEY / LLM_BASE_URL / LLM_MODEL（任意 OpenAI 兼容服务）
 
-python scripts/preflight.py --fix   # 启动前体检：拦 .env 变目录、补建 uploads/data
+# 解释器名说明：WSL/Linux 用 python3（Ubuntu 默认不提供 python 别名）；
+#              Windows 若没有 python3.exe，把下面的 python3 换成 python。
+# 1) 必须生成自己的 JWT 密钥（照抄示例值会在容器里被拒绝启动——默认值写在源码里，人人可见）
+python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+#    把输出写进 backend/.env 的 SECRET_KEY
+
+# 2) 至少填 LLM_API_KEY / LLM_BASE_URL / LLM_MODEL（任意 OpenAI 兼容服务）
+
+python3 scripts/preflight.py --fix   # 启动前体检：拦 .env 变目录/默认密钥、补建 uploads/data
 docker compose up -d --build
 # 前端 http://localhost     后端文档 http://localhost:8000/docs
 ```
 
 `scripts/preflight.py` 是针对 Compose bind mount 的保险丝：源路径不存在时 Docker 会**静默建空目录**，
 backend 目录下的 .env 一旦变成目录，`env_file` 会直接报 `is a directory`，且报错信息不会指向真因。
-该脚本还会检查 `.env` 是否为合法 UTF-8（防止 GBK 存盘/双重编码把配置值写坏）。
+该脚本还会检查 `.env` 是否为合法 UTF-8（防止 GBK 存盘/双重编码把配置值写坏），
+并在启动前拦下"仍是默认 `SECRET_KEY`"——省掉"容器反复重启、再翻日志找原因"那一轮。
 
 启用 Celery 异步处理（文档量大时）：
 
@@ -150,7 +161,7 @@ cd frontend && npm run build                              # 含 vue-tsc 类型�
 # 然后：cd backend && .venv/Scripts/python -m ruff check app tests scripts
 ```
 
-测试里有六道回归门：
+测试里有七道回归门：
 
 | 门 | 文件 | 拦住什么 |
 |---|---|---|
@@ -159,6 +170,7 @@ cd frontend && npm run build                              # 含 vue-tsc 类型�
 | 溯源与拒答 | `test_grounding.py` | citation 覆盖率与拒答指标退化 |
 | 检索缓存 | `test_retrieval_cache.py` | 缓存命不中、文档变更后不失效 |
 | 并发不阻塞 | `test_concurrency.py` | 同步检索重新回到事件循环里 |
+| 凭据可吊销 | `test_security.py` | token 缺 `jti`、登出后同一 token 仍能用、吊销误伤同用户其他 token |
 | 文档一致性 | `scripts/check_docs.py` | 测试数、路径、接口与代码不符；私有文档/密钥混入版本库 |
 
 后端测试用假的 OpenAI / Chroma 替身，不依赖网络与外部服务；每个用例独立建表，互不污染。
@@ -178,7 +190,7 @@ backend/
   app/evaluation/      # 金标集、指标、拒答统计、LLM 裁判、RAGAS 适配
   migrations/          # Alembic 迁移（baseline 已固化 13 表 + 50 索引）
   scripts/             # 微调脚本、RBAC 迁移、索引效果实测
-  tests/               # 106 个测试（含迁移/检索回归/溯源/缓存/并发五道门）
+  tests/               # 118 个测试（含迁移/检索回归/溯源/缓存/并发/吊销六道门）
 frontend/
   src/views/           # 13 个页面
   src/api/             # 类型化接口层
@@ -190,15 +202,37 @@ scripts/preflight.py   # 启动前体检（.env 类型/编码、bind mount 目�
 docker/nginx.conf      # 可选：宿主机级 Nginx（HTTPS/域名）参考配置
 ```
 
+## 近期加固（2026-11-02）
+
+一轮以「测试全绿但依然可能错」为假设的代码审查，24 个文件 / +908 −123，新增 12 个回归用例（117 passed + 1 skipped）。
+
+| 类 | 问题 | 修法 |
+|---|---|---|
+| 静默失败 | `hybrid.py` 与 `wiki/compiler.py` 直接构造 Chroma 单例，绕过 `VECTOR_PROVIDER`：生产环境**向量路永远返回空**（退化为纯 BM25）、Wiki 编译**返回成功但生成 0 页** | 统一走 `get_vector_store()` |
+| 静默失败 | LLM 精排结果被二次排序按 `score` 覆盖，精排等于没开 | 排序键改 `(rerank_rank, -fusion_score)` |
+| 设计缺陷 | 跨量纲 `score` 混排；稀疏路无阈值（`> 0` 即候选）；BM25 用父块建索引稀释词频；精排输入 20×1000 字 | 阈值改 `min(BM25_MIN_SCORE, 头名×比例)`；索引子块/返回父块双字段；`RERANK_MAX_CHARS`；`query_batch` 批量 embedding |
+| 安全 | `SECRET_KEY` 默认值可上线；token 无 `jti` 不可吊销；`AUTO_CREATE_TABLES` 掩盖漏写迁移；Redis 静默降级破坏跨进程缓存一致性 | 分环境校验并启动即失败；`jti` + 登出写 Redis（TTL = 剩余寿命）；两份 compose 显式关闭；celery 模式禁止降级 |
+| 测试与验证 | 假 Chroma 只认单条 query（与真实契约不符）；缓存用例的计数点绑死 `query`；`except Exception` 接不住客户端断连的 `CancelledError` | 替身按二维嵌套返回；计数点移到必经的 `_embed`；补 `CancelledError` 分支 |
+
+同时补齐：流式接口的 `grounding` 与异常落库、`history` / `memory_summary` 的注入过滤、embedding 缓存上限与退出落盘、`/api/health` 暴露运行时配置。
+
+验证要点：
+
+- **`VECTOR_PROVIDER=qdrant` 起一次服务再问一题**——静默失败只能靠换配置验证，跑默认配置的测试永远发现不了。
+- **两种分词粒度都跑一遍**（装/不装 jieba）——token 数差 3 倍，BM25 分数完全不同，只在一条路上验等于没验。
+
 ## 已知限制
 
 - 检索已用 `run_in_threadpool` 挪出事件循环，但线程池默认 40 个，极高并发下仍会排队。
 - Agent 无 checkpoint / human-in-the-loop，长任务中断后不能续跑。
 - 限流是单进程内存窗口，多副本部署需换成 Redis 计数。
 - BM25 索引按知识库整文件读写，适合中小规模；十万级切片应换成倒排索引服务。
+- `BM25_MIN_SCORE`（默认 0.5）是按 IDF 公式推的起点，**依赖语料**：小语料下 IDF 整体偏小，阈值调高会误杀正常词，接入真实知识库后应用 `test_eval_regression.py` 的 Hit@3 重新标定。
+- 凭据吊销记录存在 Redis，单进程内存缓存模式下**重启即失效**；多副本部署必须配 Redis。
 - 文档原文经 `/uploads` 静态目录访问，未做签名 URL，多租户场景需要补。
 - 溯源校验用字符二元组对齐，对大幅改写的句子偏保守——它是提示，不是判决。
 - 检索缓存只做"片段级 + 版本号失效"，没有语义缓存；多实例必须用 Redis，否则各进程各一份。
+- `EMBEDDING_CACHE_*` 的裁剪策略是 FIFO 而非 LRU，热点 key 可能被淘汰；命中率成为瓶颈时再换。
 - A2A（Agent 互操作）默认关闭，避免公网暴露内部知识库。
 - 工程路径建议不超过 80 个字符且避免中文、空格与 `+`：本项目当前根路径 100 字符，
   `frontend/node_modules` 下最长路径已达 251 字符，依赖 Windows 长路径开关才没报错；
