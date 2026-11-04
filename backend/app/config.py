@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./knowledge_base.db"
     # 启动时是否用 SQLAlchemy create_all 建表（开发/测试方便）。
     # 生产必须置 false，改用 `alembic upgrade head`——create_all 只建缺失的表，不会改已有表结构。
-    AUTO_CREATE_TABLES: bool = True
+    AUTO_CREATE_TABLES: bool = False
 
     # 启动期等待数据库的最长重试次数与退避区间（秒）。
     # 默认 0.5→1→2→4→5… 累计约 2~2.5 分钟，覆盖容器 DNS 未注册、PG crash recovery、
