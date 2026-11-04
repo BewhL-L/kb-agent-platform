@@ -12,6 +12,11 @@ env/
 .ruff_cache/
 .mypy_cache/
 
+# 测试运行产物：环境临时目录不可用时，pytest 与测试夹具会回退到当前目录，
+# 跑完不清理就会残留（曾出现 backend/kb_test_xxxx/ 与 backend/pytest-of-<user>/）
+**/kb_test_*/
+**/pytest-of-*/
+
 # 上传文件与向量库
 backend/uploads/*
 !backend/uploads/.gitkeep
@@ -60,3 +65,6 @@ Thumbs.db
 
 # AI 协作工具的工作区（含会话记忆），不属于项目产物
 .workbuddy/
+frontend/.tmp/
+# jieba 分词缓存（测试/首次启动生成）
+backend/jieba.cache
