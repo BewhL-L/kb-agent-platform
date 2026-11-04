@@ -5,8 +5,14 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import User
 from ..schemas import ModelUpdate, PasswordUpdate, TokenResponse, UserCreate, UserLogin, UserResponse
-from ..utils.deps import get_current_user
-from ..utils.security import create_access_token, hash_password, verify_password
+from ..utils.deps import get_current_user, oauth2_scheme
+from ..utils.security import (
+    create_access_token,
+    decode_token,
+    hash_password,
+    revoke_token,
+    verify_password,
+)
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 
@@ -45,6 +51,24 @@ def login(data: UserLogin, db: Session = Depends(get_db)):
 @router.get("/me", response_model=UserResponse, summary="获取当前用户")
 def get_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+@router.post("/logout", summary="登出（服务端吊销当前 token）")
+def logout(
+    token: str = Depends(oauth2_scheme),
+    current_user: User = Depends(get_current_user),
+):
+    """把当前这枚 token 写进吊销表。
+
+    没有这一步，"登出"只是前端删掉 localStorage，抓包拿到的那枚 token 在 7 天内仍然可用。
+    吊销标记的 TTL 等于该 token 的剩余寿命，过期后自然清理，不会无限增长。
+    """
+    payload = decode_token(token) or {}
+    revoked = revoke_token(payload)
+    return {
+        "message": "已登出" if revoked else "已登出（该 token 签发于吊销机制上线前，按自然过期失效）",
+        "revoked": revoked,
+    }
 
 
 @router.put("/password", summary="修改密码")

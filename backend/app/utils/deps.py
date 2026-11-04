@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import KbMember, KnowledgeBase, User
-from .security import decode_token
+from .security import decode_token, is_token_revoked
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
@@ -28,6 +28,10 @@ def get_current_user(
     )
     payload = decode_token(token)
     if payload is None:
+        raise credentials_exception
+    # 签名与 exp 都对，还要问一句"这枚 token 有没有被主动注销"。
+    # 少了这一步，登出就只是前端删掉本地存储，服务端仍然认这枚 token——形同虚设。
+    if is_token_revoked(payload):
         raise credentials_exception
     user_id = payload.get("sub")
     if user_id is None:

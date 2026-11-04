@@ -80,6 +80,18 @@ class RedisCache:
 
 
 def build_cache():
+    """选择缓存后端。
+
+    两种模式的行为**故意不同**：
+
+    - `ASYNC_MODE=thread`（单进程开发）：Redis 连不上就降级内存缓存，只记 warning。
+      反正只有一个进程，内存缓存语义是对的。
+    - `ASYNC_MODE=celery`（backend + worker 两个进程）：Redis 连不上**直接抛错**。
+      因为版本号（`kb:{id}:ver`）是跨进程失效的唯一手段：worker 处理完文档后 bump 的版本号
+      如果只落在 worker 自己的内存里，API 侧会继续命中旧 key，最长 `RETRIEVAL_CACHE_TTL`
+      秒返回过期检索结果，而且**除了那条 warning 没有任何信号**——这正是"不影响使用"的
+      失败最容易长期潜伏的那一类。宁可启动失败，也不要带着一份各进程不一致的缓存对外服务。
+    """
     if settings.REDIS_URL:
         try:
             import redis
@@ -89,11 +101,31 @@ def build_cache():
             logger.info("缓存使用 Redis")
             return RedisCache(client)
         except Exception as e:
+            if settings.ASYNC_MODE == "celery":
+                raise RuntimeError(
+                    "拒绝启动：ASYNC_MODE=celery 需要共享缓存，但 Redis 不可用 "
+                    f"({settings.REDIS_URL})：{e}。"
+                    "celery 模式下 backend 与 worker 是独立进程，内存缓存会让检索结果"
+                    "在文档更新后继续返回旧值，因此这里不做降级。"
+                    "请先确认 redis 容器健康（docker compose ps redis / docker compose logs redis）。"
+                ) from e
             logger.warning(f"Redis 不可用，降级为内存缓存：{e}")
+    elif settings.ASYNC_MODE == "celery":
+        raise RuntimeError(
+            "拒绝启动：ASYNC_MODE=celery 必须配置 REDIS_URL（跨进程共享的缓存与版本号）。"
+        )
     return MemoryCache()
 
 
 cache = build_cache()
+
+
+def cache_backend_name() -> str:
+    """当前实际使用的缓存后端，health 接口会暴露它。
+
+    存在的意义：降级是静默发生的，唯一能让人事后发现"原来是内存缓存"的地方。
+    """
+    return "redis" if isinstance(cache, RedisCache) else "memory"
 
 
 def cache_key(prefix: str, *parts) -> str:

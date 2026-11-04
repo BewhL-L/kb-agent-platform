@@ -9,8 +9,11 @@ Docker Compose 的 bind mount 有个静默陷阱：**源路径不存在时，Doc
 这个脚本在 `docker compose up` 之前把这类问题显式暴露出来，并顺手补建正常目录。
 
 用法：
-    python scripts/preflight.py           # 只检查，不改动
-    python scripts/preflight.py --fix     # 补建缺失目录；删除"空的 .env 目录"
+    python3 scripts/preflight.py           # 只检查，不改动
+    python3 scripts/preflight.py --fix     # 补建缺失目录；删除"空的 .env 目录"
+
+    （Windows 上若没有 python3.exe，把 python3 换成 python。
+      Windows 与 WSL 的 venv 不能共用，本脚本零依赖，无需激活任何 venv。）
 
 退出码：0=可以启动，1=存在必须人工处理的问题。
 """
@@ -94,6 +97,54 @@ def check_compose() -> None:
         notes.append("docker-compose.yml 仍设置了 container_name，会阻碍 --scale 与多套环境并存")
 
 
+# 与 app/config.py 的默认值保持同步（脚本刻意零依赖，不 import 应用配置）
+DEFAULT_SECRET = "your-secret-key-change-this-in-production"
+
+
+def _parse_env_file() -> dict:
+    """把 backend/.env 读成键值对。只做字符串解析，不引 pydantic。"""
+    if not ENV_FILE.is_file():
+        return {}
+    try:
+        text = ENV_FILE.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    values = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        values[key.strip()] = val.strip().strip('"').strip("'")
+    return values
+
+
+def check_runtime_config() -> None:
+    """检查"能启动但会出事"的配置。
+
+    与后端启动期的 `validate_runtime_config()` 呼应，但时机不同：
+    这里在 `docker compose up` **之前**给出提示，省掉"容器反复重启、再翻日志找原因"那一轮。
+    """
+    values = _parse_env_file()
+    if not values:
+        return
+
+    secret = values.get("SECRET_KEY", "")
+    if not secret or secret == DEFAULT_SECRET:
+        problems.append(
+            "backend/.env 的 SECRET_KEY 仍是默认值（或为空）。\n"
+            "     容器内 DEBUG=false，后端会拒绝启动（默认密钥写在源码里，人人可伪造 token）。\n"
+            '     处理：python3 -c "import secrets; print(secrets.token_urlsafe(48))" 然后写进 .env'
+        )
+
+    auto = values.get("AUTO_CREATE_TABLES", "").lower()
+    if auto in {"true", "1", "yes"}:
+        notes.append(
+            "backend/.env 里 AUTO_CREATE_TABLES=true：compose 会强制覆盖为 false，"
+            "但本地裸跑（uvicorn 直连）会生效——裸跑没问题，别让它进生产"
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="knowledge-base-platform 启动前体检")
     parser.add_argument("--fix", action="store_true", help="自动修复可安全修复的问题")
@@ -103,6 +154,7 @@ def main() -> int:
     check_env(args.fix)
     check_dirs(args.fix)
     check_compose()
+    check_runtime_config()
 
     for n in notes:
         print(f"  · {n}")

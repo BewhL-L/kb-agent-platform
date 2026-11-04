@@ -24,7 +24,9 @@ services:
       - ./backend/data:/app/data
     environment:
       - DEBUG=false
-      - DATABASE_URL=postgresql+psycopg2://postgres:kb_password@postgres:5432/knowledge_base
+      # worker 只写业务表，绝不建表；与 backend 保持同一套「schema 只归 Alembic」的约束
+      - AUTO_CREATE_TABLES=false
+      # DATABASE_URL 不在这里设置：由 env_file 注入的 backend/.env 提供（密码不进版本库）
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2

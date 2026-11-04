@@ -17,7 +17,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: kb_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在仓库根 .env 里设置 POSTGRES_PASSWORD（复制 .env.example）}
       POSTGRES_DB: knowledge_base
     ports:
       - "127.0.0.1:5432:5432"
@@ -82,11 +82,15 @@ services:
     environment:
       # 容器内不是开发环境：关闭 DEBUG，避免把堆栈直接回给客户端
       - DEBUG=false
+      # 建表只由 Alembic 管（入口的 db_bootstrap.py 会升到 head）。
+      # 生产若继续让 create_all 兜底，新加字段忘记写迁移时会被它悄悄建好、测试还全绿，
+      # 部署到已有数据的库才炸——这正是 test_migrations.py 想拦的场景。
+      - AUTO_CREATE_TABLES=false
       # 异步模式：以 Compose 为准，不依赖 .env 里的值。
       # 基础版没有 celery-worker，必须是 thread；prod overlay 会覆盖成 celery。
       - ASYNC_MODE=thread
       # 数据库：Docker 网络内用服务名 postgres
-      - DATABASE_URL=postgresql+psycopg2://postgres:kb_password@postgres:5432/knowledge_base
+      # DATABASE_URL 不在这里设置：由 env_file 注入的 backend/.env 提供（密码不进版本库）
       # Redis：Docker 网络内用服务名 redis
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/1
