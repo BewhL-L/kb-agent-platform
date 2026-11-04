@@ -9,3 +9,11 @@ chroma_db/*
 .env.*
 .env.bak*
 .git
+data/
+bm25_index/
+kb_test_*/
+pytest-of-*/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+jieba.cache
