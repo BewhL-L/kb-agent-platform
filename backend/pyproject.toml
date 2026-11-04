@@ -1,3 +1,4 @@
+# 运行时基线：Python 3.11（与 backend/Dockerfile、CI 一致）；本地 venv 用 python3.11 -m venv，详见仓库根 README。
 # 工具配置（ruff）。只放配置，不做打包。
 [tool.ruff]
 line-length = 120
